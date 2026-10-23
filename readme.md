@@ -1,87 +1,87 @@
 # Tracer watch
 
-Каждые 5 минут опрашивает API motoauction.online и шлёт в Telegram новые лоты Yamaha Tracer, которые подходят под критерии:
+Polls the motoauction.online API every 5 minutes and sends new Yamaha Tracer lots that match the criteria to Telegram:
 
-- модель: группы, где в названии есть `TRACER` (`MT-09 TRACER`, `MT-09 TRACER GT`, `TRACER 9 GT+` и `TRACER 9GT`);
-- год 2018 и новее;
-- оценка 4 и выше;
-- стартовая цена не выше лимита: 700 000 ¥, а при оценке 6+ — 730 000 ¥;
-- средняя цена не выше лимита × 1.4. Иначе лот почти наверняка уйдёт дороже.
+- model: any model group with `TRACER` in its name (`MT-09 TRACER`, `MT-09 TRACER GT`, `TRACER 9 GT+`, which also covers `TRACER 9GT`);
+- year 2018 or newer;
+- auction grade 4 or higher;
+- starting price within the limit: ¥700,000, or ¥730,000 for grade 6 and up;
+- average price for similar lots no higher than 1.4 × the limit. Above that, the lot almost certainly sells for more.
 
-В сообщении есть фото, год, оценка, пробег, дата торгов, старт и средняя цена, прогноз «под ключ» с сайта, комментарий аукциона и замечания инспектора по узлам, а также кнопка «Открыть лот». Когда торги по лоту закончатся, бот ответит на своё сообщение итогом: продан за столько-то или не продан. Если сайт не отвечает дольше 30 минут, бот пришлёт предупреждение, а когда сайт оживёт — сообщение об этом.
+Each alert carries a photo, year, grade, mileage, auction date, starting and average price, the site's landed-cost estimate, the auction comment, the inspector's notes per section, and an "open lot" button. Once the auction is over, the bot replies to its own alert with the outcome: sold and for how much, or not sold. If the site stays unreachable for more than 30 minutes, the bot sends a warning, and another message once it is back.
 
-Раз в сутки, в 10:00 по Бишкеку, приходит сводка: сколько лотов Tracer сейчас в продаже, сколько бот прислал и какие новые лоты отсеял и почему. Отдельного сообщения «ничего не нашёл» после каждого прохода нет нарочно: раз в 5 минут это 288 сообщений в сутки, и среди них потерялись бы настоящие находки. Зато сводка служит проверкой, что бот жив: если она не пришла, что-то сломалось.
+Once a day, at 10:00 Bishkek time, a digest arrives: how many Tracer lots are on sale, how many alerts went out, and which new lots were skipped and why. There is deliberately no "nothing found" message after every pass: at one pass per 5 minutes that would be 288 messages a day, and real finds would drown in them. The digest doubles as a heartbeat instead: if it does not arrive, something is broken.
 
-Без зависимостей, нужен только Python 3.9+.
+The bot writes to Telegram in Russian. No dependencies, Python 3.9+ only.
 
-## Как это крутится
+## How it runs
 
 ```
-cron-job.org, каждые 5 мин
+cron-job.org, every 5 min
    ↓  POST api.github.com/.../actions/workflows/watch.yml/dispatches
-GitHub Actions: один проход tracer_watch.py (~15 с)
-   ↓  новые подходящие лоты → Telegram
-   ↓  что уже отправлено → ветка state (коммит только когда что-то поменялось)
+GitHub Actions: a single pass of tracer_watch.py (~15 s)
+   ↓  new matching lots → Telegram
+   ↓  what has been sent → the state branch (committed only when something changed)
 ```
 
-Своего сервера нет, засыпать нечему. Роль пинговалки здесь играет запуск workflow. В workflow есть и своё расписание раз в 30 минут, но только как подстраховка: GitHub исполняет его с опозданиями.
+There is no server of its own, so nothing can fall asleep. The keep-alive ping is the workflow dispatch itself. The workflow also has a schedule of its own, every 30 minutes, but only as a fallback: GitHub runs scheduled workflows late and disables them after 60 days without commits.
 
-Почему не Render, как cacher: бесплатные 750 часов в месяц — это на весь аккаунт, и разбуженный круглосуточно cacher съедает их почти целиком. Со вторым таким же сервисом квота кончилась бы к середине месяца, и Render усыпил бы обоих.
+Why not an always-on web service on Render's free tier: the 750 free hours a month are per account, and one service awake around the clock already takes 744 of them. A second one would run the quota out by mid-month, and Render would suspend both.
 
-Репозиторий публичный, потому что Actions для публичных репозиториев бесплатны без лимита. Запуск раз в 5 минут — это ~8 600 запусков в месяц, а приватному репо дают 2 000 минут. Секретов в коде нет: токен бота и chat_id лежат в секретах репозитория.
+The repository is public because Actions minutes are unlimited for public repositories. One pass every 5 minutes is about 8,600 runs a month, while a private repository gets 2,000 minutes. There are no secrets in the code: the bot token and chat id live in the repository secrets.
 
-## Настройка
+## Setup
 
-### 1. Бот в Telegram
+### 1. Telegram bot
 
-1. В Telegram открыть [@BotFather](https://t.me/BotFather), выполнить `/newbot` и получить токен.
-2. Написать своему боту любое сообщение.
-3. Локально:
+1. Open [@BotFather](https://t.me/BotFather), run `/newbot` and take the token.
+2. Send your bot any message.
+3. Locally:
 
    ```sh
-   cp .env.example .env               # вписать TG_BOT_TOKEN
-   python3 tracer_watch.py --whoami   # напечатает TG_CHAT_ID — вписать в .env
-   python3 tracer_watch.py --test     # должно прийти тестовое сообщение
+   cp .env.example .env               # fill in TG_BOT_TOKEN
+   python3 tracer_watch.py --whoami   # prints TG_CHAT_ID; put it into .env
+   python3 tracer_watch.py --test     # a test message should arrive
    ```
 
-### 2. Секреты в GitHub
+### 2. GitHub secrets
 
 ```sh
-gh secret set -f .env -r ersul4ik/tracer-watch
+gh secret set -f .env -R ersul4ik/tracer-watch
 ```
 
-Команда загрузит все строки из `.env` в секреты репозитория. Workflow читает оттуда только `TG_BOT_TOKEN` и `TG_CHAT_ID`, остальное ни на что не влияет. Проверка: Actions → **watch** → **Run workflow**. Через ~20 секунд должен появиться зелёный запуск.
+This uploads every line of `.env` as a repository secret. The workflow reads only `TG_BOT_TOKEN` and `TG_CHAT_ID`; the rest has no effect. To check: Actions → **watch** → **Run workflow**, and a green run should show up within ~20 seconds.
 
-### 3. Пинговалка на cron-job.org
+### 3. Keep-alive ping on cron-job.org
 
 1. GitHub → Settings → Developer settings → [Fine-grained tokens](https://github.com/settings/personal-access-tokens/new):
    - Repository access: **Only select repositories** → `tracer-watch`;
-   - Permissions → Repository → **Actions: Read and write**;
-   - Expiration — максимальный срок. Когда токен истечёт, пинговалка начнёт получать `401`, и его надо будет перевыпустить.
+   - Permissions → Repositories → **Actions: Read and write**;
+   - Expiration: the longest available. Once the token expires, the ping starts getting `401` and the token has to be reissued.
 2. [cron-job.org](https://cron-job.org) → **Create cronjob**:
    - Title: `tracer-watch`;
    - URL: `https://api.github.com/repos/ersul4ik/tracer-watch/actions/workflows/watch.yml/dispatches`;
    - Schedule: **Every 5 minutes**;
-   - вкладка **Advanced**:
+   - **Advanced** tab:
      - Request method: `POST`;
      - Headers:
-       - `Authorization: Bearer <токен из п.1>`
+       - `Authorization: Bearer <token from step 1>`
        - `Accept: application/vnd.github+json`
        - `Content-Type: application/json`
      - Request body: `{"ref":"main"}`
-3. Save → **Test run**. Ответ должен быть `204`, а в Actions появится новый запуск.
+3. Save → **Test run**. The response should be `204`, and a new run appears under Actions.
 
-## Полезное
+## Useful commands
 
 ```sh
-python3 tracer_watch.py --dry-run         # что пришло бы сейчас (ничего не шлёт)
-python3 tracer_watch.py --dry-run --all   # то же по всем лотам, включая проданные сегодня
-gh workflow run watch -f dry_run=true     # то же самое, но на сервере; результат в логе запуска
-gh run list -w watch -L 5                 # последние запуски
+python3 tracer_watch.py --dry-run          # what would be sent right now (sends nothing)
+python3 tracer_watch.py --dry-run --all    # the same over every lot, including those sold today
+gh workflow run watch.yml -f dry_run=true  # the same on the server; the output is in the run log
+gh run list -w watch.yml -L 5              # latest runs
 ```
 
-Логи запусков: [github.com/ersul4ik/tracer-watch/actions](https://github.com/ersul4ik/tracer-watch/actions).
+Run logs: [github.com/ersul4ik/tracer-watch/actions](https://github.com/ersul4ik/tracer-watch/actions).
 
-Критерии по умолчанию зашиты в код. Поменять их на сервере можно в Settings → Secrets and variables → Actions → **Variables**: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `MIN_YEAR`, `MIN_RANK`, `TOP_RANK`, `MAX_AVG_RATIO`, `MODEL_PATTERN`, а также час сводки `DIGEST_HOUR` (`-1` — выключить) и часовой пояс `TZ_OFFSET_HOURS`. Например, `gh variable set LIMIT_JPY -b 750000`.
+The default criteria live in the code. On the server they can be overridden in Settings → Secrets and variables → Actions → **Variables**: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `MIN_YEAR`, `MIN_RANK`, `TOP_RANK`, `MAX_AVG_RATIO`, `MODEL_PATTERN`, plus the digest hour `DIGEST_HOUR` (`-1` turns it off) and the time zone `TZ_OFFSET_HOURS`. For example, `gh variable set LIMIT_JPY -b 750000`.
 
-Что уже отправлено, хранится в `state.json` в ветке `state`. Если удалить оттуда лот, бот пришлёт его заново, если тот ещё в продаже.
+What has already been sent is kept in `state.json` on the `state` branch. Deleting a lot from it makes the bot send that lot again if it is still on sale.
