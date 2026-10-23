@@ -26,10 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Что уже отправлено, хранится в отдельной ветке state, чтобы не засорять main
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: state
           path: .state
