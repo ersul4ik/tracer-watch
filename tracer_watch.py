@@ -275,9 +275,12 @@ def result_message(detail):
 
 def load_state():
     try:
-        state = json.loads(CFG["state"].read_text())
+        return with_defaults(json.loads(CFG["state"].read_text()))
     except (FileNotFoundError, json.JSONDecodeError):
-        state = {}
+        return with_defaults({})
+
+
+def with_defaults(state):
     state.setdefault("lots", {})
     # Неподходящие лоты в продаже: когда впервые увидены и почему отсеяны — для сводки
     state.setdefault("skipped", {})
@@ -444,7 +447,7 @@ def main():
 
     site = Site()
     # В dry-run состояние не читается и не пишется: каждый прогон видит всё как в первый раз
-    state = load_state() if not args.dry_run else {"lots": {}, "fail_since": None, "alerted": False}
+    state = load_state() if not args.dry_run else with_defaults({})
     while True:
         try:
             run_once(site, tg, state, include_finished=args.dry_run and args.all, verbose=args.dry_run)
