@@ -78,6 +78,8 @@ gh workflow run watch -f dry_run=true     # то же самое, но на се
 gh run list -w watch -L 5                 # последние запуски
 ```
 
+Логи запусков: [github.com/ersul4ik/tracer-watch/actions](https://github.com/ersul4ik/tracer-watch/actions).
+
 Критерии по умолчанию зашиты в код. Поменять их на сервере можно в Settings → Secrets and variables → Actions → **Variables**: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `MIN_YEAR`, `MIN_RANK`, `TOP_RANK`, `MAX_AVG_RATIO`, `MODEL_PATTERN`. Например, `gh variable set LIMIT_JPY -b 750000`.
 
 Что уже отправлено, хранится в `state.json` в ветке `state`. Если удалить оттуда лот, бот пришлёт его заново, если тот ещё в продаже.
