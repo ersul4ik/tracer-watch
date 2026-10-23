@@ -47,6 +47,8 @@ jobs:
           TOP_LIMIT_JPY: ${{ vars.TOP_LIMIT_JPY }}
           MAX_AVG_RATIO: ${{ vars.MAX_AVG_RATIO }}
           MODEL_PATTERN: ${{ vars.MODEL_PATTERN }}
+          DIGEST_HOUR: ${{ vars.DIGEST_HOUR }}
+          TZ_OFFSET_HOURS: ${{ vars.TZ_OFFSET_HOURS }}
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             python3 tracer_watch.py --dry-run --all

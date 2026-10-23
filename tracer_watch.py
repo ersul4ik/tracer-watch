@@ -20,7 +20,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -75,6 +75,9 @@ CFG = {
     "state": Path(env_str("STATE_FILE", HERE / "state.json")),
     # Сколько минут сайт может не отвечать, прежде чем бот скажет об этом в Telegram
     "alert_after_min": env_int("ALERT_AFTER_MIN", 30),
+    # Ежедневная сводка: в какой час по местному времени (-1 — не слать) и пояс относительно UTC
+    "digest_hour": env_int("DIGEST_HOUR", 10),
+    "tz": timezone(timedelta(hours=env_float("TZ_OFFSET_HOURS", 6))),
 }
 
 
@@ -276,15 +279,18 @@ def load_state():
     except (FileNotFoundError, json.JSONDecodeError):
         state = {}
     state.setdefault("lots", {})
+    # Неподходящие лоты в продаже: когда впервые увидены и почему отсеяны — для сводки
+    state.setdefault("skipped", {})
     state.setdefault("fail_since", None)
     state.setdefault("alerted", False)
     return state
 
 
 def save_state(state):
-    # Лоты, о которых писали больше 60 дней назад, уже не нужны
+    # Лоты, впервые увиденные больше 60 дней назад, уже не нужны
     cutoff = time.time() - 60 * 86400
-    state["lots"] = {k: v for k, v in state["lots"].items() if v.get("at", 0) > cutoff}
+    for name in ("lots", "skipped"):
+        state[name] = {k: v for k, v in state[name].items() if v.get("at", 0) > cutoff}
     text = json.dumps(state, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
     # Файл переписывается, только если что-то поменялось: в Actions каждое изменение — это коммит
     if CFG["state"].exists() and CFG["state"].read_text() == text:
@@ -296,7 +302,8 @@ def save_state(state):
 
 
 def run_once(site, tg, state, include_finished=False, verbose=False):
-    lots_state = state["lots"]
+    lots_state, skipped = state["lots"], state["skipped"]
+    first_run = "digest_at" not in state
     groups = [g for g in site.model_groups(CFG["brand"]) if CFG["model_re"].search(g)]
     lots = {}
     for g in groups:
@@ -317,7 +324,11 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
                 f"av{lot.get('availability')} {lot.get('auction_date')}: {reason or 'ПОДХОДИТ'}")
         if reason:
             # отказ по старту/средней не окончательный — цена может появиться позже,
-            # поэтому такие лоты не запоминаем и проверяем на следующем проходе
+            # поэтому в lots такие лоты не попадают и проверяются на каждом проходе
+            if lot.get("availability") == FOR_SALE and key not in skipped:
+                skipped[key] = {"at": int(now), "line": (
+                    f"{lot.get('model')} {lot.get('year')} · оценка {lot.get('rank')}"
+                    f" · торги {(lot.get('auction_date') or '?')[:5]} — {reason}")}
             continue
         detail = site.lot(lot_id)
         photo = lot.get("pathImg") or next(iter(detail.get("photos") or []), None)
@@ -344,6 +355,38 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
             entry["done"] = True
         elif now - entry["date_ts"] > 3 * 86400:
             entry["done"] = True  # итог так и не появился — перестаём спрашивать
+
+    if first_run:
+        # Всё, что лежит на сайте к первому запуску, — не «новое за сутки»
+        state["digest_at"] = int(now)
+    if not tg.dry_run:
+        maybe_send_digest(state, tg, sum(1 for l in lots.values() if l.get("availability") == FOR_SALE))
+
+
+def maybe_send_digest(state, tg, for_sale):
+    """Раз в сутки: что бот видел. Заодно знак, что он жив — нет сводки, значит что-то сломалось."""
+    if CFG["digest_hour"] < 0:
+        return
+    local = datetime.now(CFG["tz"])
+    today = local.strftime("%Y-%m-%d")
+    if local.hour < CFG["digest_hour"] or state.get("digest_day") == today:
+        return
+    since = state.get("digest_at", 0)
+    sent = sum(1 for v in state["lots"].values() if v["at"] > since)
+    new = [v["line"] for v in sorted(state["skipped"].values(), key=lambda v: v["at"]) if v["at"] > since]
+
+    lines = ["📋 <b>Сводка за сутки</b>",
+             f"Лотов Tracer в продаже: {for_sale}."
+             + (f" Прислал подходящих: <b>{sent}</b>." if sent else " Подходящих не нашлось.")]
+    if new:
+        lines.append(f"\nНовые за сутки, не подошли ({len(new)}):")
+        lines += [f"• {html.escape(x)}" for x in new[:30]]
+        if len(new) > 30:
+            lines.append(f"… и ещё {len(new) - 30}")
+    else:
+        lines.append("Других новых лотов не было." if sent else "Новых лотов за сутки не появилось.")
+    tg.send("\n".join(lines))
+    state["digest_day"], state["digest_at"] = today, int(time.time())
 
 
 def note_site_ok(state, tg):
