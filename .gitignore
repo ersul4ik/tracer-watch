@@ -1,0 +1,6 @@
+.env
+state.json
+state.tmp
+watch.log
+__pycache__/
+.DS_Store

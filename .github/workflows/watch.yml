@@ -1,0 +1,65 @@
+name: watch
+
+on:
+  # Основной запуск: cron-job.org дёргает этот workflow через GitHub API каждые 5 минут.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Ничего не слать, показать в логе, что пришло бы (по всем лотам, включая проданные)"
+        type: boolean
+        default: false
+  # Подстраховка на случай, если cron-job.org отвалится. Расписание GitHub часто опаздывает
+  # и отключается после 60 дней без коммитов в репо, поэтому основным его делать нельзя.
+  schedule:
+    - cron: "7,37 * * * *"
+
+# Два прохода сразу не нужны: оба прочитали бы один state и прислали одни и те же лоты
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Что уже отправлено, хранится в отдельной ветке state, чтобы не засорять main
+      - uses: actions/checkout@v4
+        with:
+          ref: state
+          path: .state
+
+      - name: Проход
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          STATE_FILE: .state/state.json
+          # Критерии можно поменять в Settings → Secrets and variables → Actions → Variables
+          MIN_YEAR: ${{ vars.MIN_YEAR }}
+          MIN_RANK: ${{ vars.MIN_RANK }}
+          LIMIT_JPY: ${{ vars.LIMIT_JPY }}
+          TOP_RANK: ${{ vars.TOP_RANK }}
+          TOP_LIMIT_JPY: ${{ vars.TOP_LIMIT_JPY }}
+          MAX_AVG_RATIO: ${{ vars.MAX_AVG_RATIO }}
+          MODEL_PATTERN: ${{ vars.MODEL_PATTERN }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python3 tracer_watch.py --dry-run --all
+          else
+            python3 tracer_watch.py
+          fi
+
+      - name: Сохранить state
+        if: always()
+        working-directory: .state
+        run: |
+          git add -A
+          git diff --cached --quiet && exit 0
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Update state"
+          git push -q origin HEAD:state
