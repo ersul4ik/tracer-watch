@@ -9,7 +9,9 @@ Checks Japanese motorcycle auction listings every 3 hours, or right away when as
 - the starting price is only a floor for the final one, so a start over the limit rules the lot out. A start up to 10% over still gets through, flagged as a near miss: it cannot be had within the limit, but might be worth raising it for;
 - the expected final price is no higher than 1.3 × the limit. The bot works it out itself from the same site's archive of past sales: the median of the same model within ±1 year and ±1 grade over the last year, widening the match when fewer than three sales qualify. The site's own "average price" runs high (about ¥1.07M for a 2019 GT against a median sale of ¥838k), so it is used only when the archive has nothing comparable.
 
-A lot that has not been inspected yet shows grade 0. The bot waits for the grade, and sends the lot as is if the auction is a day away and there is still none.
+A lot that has not been inspected yet shows grade 0. The bot waits for the grade, and sends the lot as is if the auction is a day away and there is still none. Once the grade of such a lot comes out, the bot replies to its alert with the inspection sheet and whether the lot still qualifies.
+
+Inspection notes in alerts come from both sources (projapan translates BDS sheets; for JBA it only has section grades). Serious notes — noises, leaks, failed seals, parts that need replacing — go first, marked with ❗, ahead of scratches and light rust.
 
 Each alert carries a photo, year, grade, mileage, auction date, starting price, what similar lots usually sell for (median, number of sales and range), the site's landed-cost estimate, the auction comment, the inspector's notes per section, and an "open lot" button. Once the auction is over, the bot replies to its own alert with the outcome: sold and for how much, or not sold. If the site stays unreachable for more than 30 minutes, the bot sends a warning, and another message once it is back.
 

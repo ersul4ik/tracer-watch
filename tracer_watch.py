@@ -168,11 +168,18 @@ class ProJapan:
     STATUS = {(0, 0): FOR_SALE, (1, 1): SOLD, (1, 0): NOT_SOLD}
     NO_PRICE = (0, 99990000)  # «старт не объявлен»
 
-    def _get(self, params):
-        url = self.BASE + "/api/lot/get-list?" + urllib.parse.urlencode(params)
+    def _get(self, params, method="get-list"):
+        url = f"{self.BASE}/api/lot/{method}?" + urllib.parse.urlencode(params)
         req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            d = json.load(r)
+        for attempt in range(2):  # projapan иногда задумывается на полминуты — один повтор
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    d = json.load(r)
+                break
+            except OSError:
+                if attempt:
+                    raise
+                time.sleep(5)
         time.sleep(1)  # сайт чужой, не торопимся
         if d.get("status") != "OK":
             raise ValueError(f"projapan: {str(d)[:200]}")
@@ -202,8 +209,6 @@ class ProJapan:
         price = x.get("price_start") or 0
         place = (x.get("place") or "").split("\n")[0]
         auction = self.AUCTIONS.get(x.get("parser_type"), str(x.get("parser_type")))
-        ratings = [f"{r['title'].lower()} {r['value']}" for r in x.get("ratings") or []
-                   if r.get("parser_title") != "global" and r.get("value") not in (None, "", "0")]
         lot = {"id": f"pj:{x['id']}", "url": f"{self.BASE}/lot/{x['id']}", "site": "projapan",
                "brand": CFG["brand"], "model": (x.get("model") or {}).get("title") or x.get("parser_model") or "",
                "year": x.get("year") or None, "rank": x.get("rank") or None,
@@ -217,9 +222,52 @@ class ProJapan:
             "auction_line": f"{auction} {place}".strip(), "lot_number": x.get("lot_number"),
             "frame_number": x.get("frame_number"),
             "auction_date_ts": int(day.replace(tzinfo=CFG["tz"]).timestamp()) if day else 0,
-            "ratings_line": ("Оценки по узлам: " + ", ".join(ratings)) if ratings else None,
+            "ratings_line": self._ratings_line(x),
             "availability": lot["availability"], "price_finish_jpy": lot["final"]}
         return lot
+
+    @staticmethod
+    def _ratings_line(x):
+        ratings = [f"{r['title'].lower()} {r['value']}" for r in x.get("ratings") or []
+                   if r.get("parser_title") != "global" and r.get("value") not in (None, "", "0")]
+        return ("Оценки по узлам: " + ", ".join(ratings)) if ratings else None
+
+    # Служебные поля листа осмотра — не замечания
+    NOT_NOTES = {"bid", "key", "horn", "lane", "year", "color", "meter", "frame_no", "displacement",
+                 "engine_model", "registration", "starting_bid", "ranking_status", "genuine_parts",
+                 "sales_data", "meter_pvi", "bds_comment"}
+
+    # Поля, чей текст без названия узла непонятен («Правая-under сильно» — это течь масла)
+    NOTE_LABELS = {"oil_leak": "Течь масла", "tube_outer": "Вилка", "tube_inner": "Вилка",
+                   "front_brake": "Передний тормоз", "rear_brake": "Задний тормоз",
+                   "front_break": "Передний тормоз", "rear_break": "Задний тормоз",  # так в их данных
+                   "front_tire": "Передняя покрышка", "rear_tire": "Задняя покрышка",
+                   "front_wheel": "Переднее колесо", "rear_wheel": "Заднее колесо",
+                   "rear_shock": "Задний амортизатор", "clutch": "Сцепление"}
+
+    def enrich(self, lot):
+        """Дописывает в detail лота лист осмотра: в списке его нет, только на странице лота.
+
+        У BDS замечания переведены на русский, у JBA — сырые японские поля, их пропускаем
+        (берём только то, где есть кириллица); оценки по узлам есть у обоих.
+        """
+        x = self._get({"id": lot["id"][3:], "lang": "ru"}, method="get-by-id")
+        meta = x.get("metadata_ru") or {}
+        detail = lot["detail"]
+        notes = []
+        for k, v in meta.items():
+            if (isinstance(v, str) and k not in self.NOT_NOTES and not k.startswith(("rank_", "detail_title"))
+                    and re.search(r"[А-Яа-яЁё]", v)):
+                label = self.NOTE_LABELS.get(k)
+                v = v.strip()
+                notes.append(f"{label}: {v}" if label and not v.lower().startswith(label.lower()) else v)
+        detail["notes"] = notes
+        prev = re.sub(r"\D", "", str(meta.get("meter_pvi") or ""))
+        if prev:
+            detail["prev_meter"] = f"{fmt_num(int(prev))} км"
+        detail["ratings_line"] = self._ratings_line(x) or detail.get("ratings_line")
+        lot["rank"] = x.get("rank") or lot["rank"]
+        return detail
 
     def result(self, key, frame):
         """Итог торгов лота: проданные лежат в архиве (type=sold), ищем по раме."""
@@ -397,6 +445,36 @@ def report_lines(detail):
     return lines
 
 
+# Замечания, из-за которых лот стоит смотреть внимательно: шумы, течи, «требует замены».
+# «Сильно» серьёзно, только если это не царапины
+SERIOUS_RE = re.compile(r"требует замен|failure|неисправ|не работ|шум|течь|утечк|трещин"
+                        r"|^(?!.*царапин).*сильно", re.I)
+
+
+def inspection_lines(detail):
+    """Лист осмотра для сообщения, серьёзные замечания — первыми и с ❗."""
+    lines = []
+    if detail.get("comment_auction_ru"):
+        lines.append(f"💬 {detail['comment_auction_ru']}")
+    if detail.get("ratings_line"):
+        lines.append(detail["ratings_line"])
+    if detail.get("prev_meter"):
+        lines.append(f"Пробег на прошлой проверке: {detail['prev_meter']}")
+    notes = report_lines(detail) + [f"• {n}" for n in detail.get("notes") or []]
+    lines += ["❗" + n[1:] for n in notes if SERIOUS_RE.search(n)]
+    lines += [n for n in notes if not SERIOUS_RE.search(n)]
+    return [html.escape(x) for x in lines]
+
+
+def fit(head, tail, max_len):
+    text = "\n".join(head)
+    for line in tail:
+        if len(text) + len(line) + 1 > max_len - 4:
+            return text + "\n…"
+        text += "\n" + line
+    return text
+
+
 def lot_message(lot, detail, max_len, stats=None):
     rank = lot.get("rank")
     limit = limit_for(rank)
@@ -436,20 +514,24 @@ def lot_message(lot, detail, max_len, stats=None):
     if lot.get("site") == "projapan":
         head.append(f"🔎 нашёл на projapan.ru, на motoauction этого лота нет · рама {e(detail.get('frame_number') or '?')}")
 
-    tail = []
-    if detail.get("comment_auction_ru"):
-        tail.append(f"💬 {e(detail['comment_auction_ru'])}")
-    if detail.get("ratings_line"):
-        tail.append(e(detail["ratings_line"]))
-    tail += [e(x) for x in report_lines(detail)]
+    return fit(head, inspection_lines(detail), max_len)
 
-    text = "\n".join(head)
-    for line in tail:
-        if len(text) + len(line) + 1 > max_len - 4:
-            text += "\n…"
-            break
-        text += "\n" + line
-    return text
+
+def grade_message(lot, detail, stats):
+    """Дополнение к лоту, ушедшему без оценки: что оказалось в листе осмотра и подходит ли он теперь."""
+    reason = check(lot, stats)
+    head = [f"📋 Появилась оценка: <b>{lot['rank']:g}</b>"]
+    _, est = expected_price(lot, stats)
+    if est:
+        head.append(f"Обычно уходят за: ~{fmt_jpy(est['median'])} (медиана {est['n']} продаж, {est['scope']})")
+    tail = inspection_lines(detail)
+    if reason:
+        head.append(f"❌ Теперь не подходит: {html.escape(reason)}")
+    elif any(x.startswith("❗") for x in tail):
+        head.append("🟡 По критериям подходит, но в листе осмотра есть серьёзные замечания ❗")
+    else:
+        head.append("✅ По-прежнему подходит")
+    return fit(head, tail, 4096)
 
 
 def result_message(detail):
@@ -538,15 +620,30 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
                 # причина меняется (появилась оценка или старт), а время первого появления — нет
                 skipped.setdefault(key, {"at": int(now)})["line"] = line
             continue
-        detail = lot.get("detail") or site.lot(lot["id"])
+        detail = projapan.enrich(lot) if lot.get("site") == "projapan" else site.lot(lot["id"])
         photo = lot.get("pathImg") or next(iter(detail.get("photos") or []), None)
         text = lot_message(lot, detail, 1024 if photo else 4096, stats)
         msg_id = tg.send(text, photo=photo, button_url=lot["url"])
         lots_state[key] = {"at": int(now), "msg": msg_id, "date_ts": detail.get("auction_date_ts") or 0,
-                           "done": lot.get("availability") != FOR_SALE}
+                           "done": lot.get("availability") != FOR_SALE, "graded": bool(lot.get("rank"))}
         if lot.get("site") == "projapan":
             lots_state[key]["frame"] = detail.get("frame_number")  # по раме потом найдём итог
         log(f"отправлен лот {key}")
+
+    # Лоты, ушедшие без оценки: когда она появилась — дописать ответом, что в листе осмотра.
+    # У старых записей поля graded нет — они уходили уже с оценкой
+    for key, entry in lots_state.items():
+        lot = lots.get(key)
+        if entry.get("done") or entry.get("graded", True) or not lot or not lot.get("rank"):
+            continue
+        try:
+            detail = projapan.enrich(lot) if lot.get("site") == "projapan" else site.lot(lot["id"])
+        except (OSError, ValueError) as e:
+            log(f"лот {key}: {e!r}")
+            continue
+        tg.send(grade_message(lot, detail, stats), reply_to=entry.get("msg"))
+        entry["graded"] = True
+        log(f"дописана оценка лота {key}")
 
     # итоги торгов по лотам, о которых уже писали
     for key, entry in lots_state.items():
