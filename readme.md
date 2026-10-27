@@ -35,7 +35,7 @@ Looked at and left out:
 
 Messages to the bot from the configured chat (anyone else is ignored):
 
-- «сходи посмотри» (or anything with «проверь», «глянь», `/check`) — check the site now and reply with what is on sale and which already-sent lots are still ahead;
+- `/check`, or a plain-language request to go and look (in Russian) — check the sites now and reply with what is on sale and which already-sent lots are still ahead;
 - `/status` — when the last check was and when the next one is due;
 - anything else — a short help.
 
@@ -106,6 +106,7 @@ This uploads every line of `.env` as a repository secret. The workflow reads onl
 python3 tracer_watch.py --dry-run          # what would be sent right now (sends nothing)
 python3 tracer_watch.py --dry-run --all    # the same over every lot, including those sold today
 gh workflow run watch.yml -f dry_run=true  # the same on the server; the output is in the run log
+gh workflow run watch.yml -f scan=true     # a real check right now, without waiting for the 3 hours
 gh run list -w watch.yml -L 5              # latest runs
 ```
 

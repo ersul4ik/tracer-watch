@@ -8,6 +8,10 @@ on:
         description: "Ничего не слать, показать в логе, что пришло бы (по всем лотам, включая проданные)"
         type: boolean
         default: false
+      scan:
+        description: "Сходить на сайты сейчас, не дожидаясь SCAN_EVERY_MIN"
+        type: boolean
+        default: false
   # Подстраховка на случай, если cron-job.org отвалится. Расписание GitHub часто опаздывает
   # и отключается после 60 дней без коммитов в репо, поэтому основным его делать нельзя.
   schedule:
@@ -55,6 +59,8 @@ jobs:
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             python3 tracer_watch.py --dry-run --all
+          elif [ "${{ inputs.scan }}" = "true" ]; then
+            python3 tracer_watch.py --scan
           else
             python3 tracer_watch.py
           fi
