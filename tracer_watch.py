@@ -65,6 +65,9 @@ CFG = {
     "brand": env_str("BRAND", "Yamaha"),
     "model_re": re.compile(env_str("MODEL_PATTERN", r"TRACER"), re.I),
     "min_year": env_int("MIN_YEAR", 2018),
+    # Префиксы рам Tracer для поиска на projapan: RN51J — 2018–20 (Tracer 900/GT), RN70J — 2021–23,
+    # RN99J и RNA1J — 2025+. RN36J (2015–17) не ищем: всё равно отсечётся по году
+    "frames": [f.strip() for f in env_str("FRAMES", "RN51J,RN70J,RN99J,RNA1J").split(",") if f.strip()],
     "min_rank": env_float("MIN_RANK", 4),
     "limit": env_int("LIMIT_JPY", 700_000),
     "top_rank": env_float("TOP_RANK", 6),
@@ -153,6 +156,98 @@ class Site:
         return self._get(f"/api/lot/{lot_id}")
 
 
+class ProJapan:
+    """Второй источник: projapan.ru — тоже витрина японских мотоаукционов, с открытым JSON API.
+
+    Нужен ради лотов BDS и JBA, которые до motoauction не доходят (на 27.10 таких было пять,
+    среди них GT 2020 со стартом 550к). Ищем по префиксу рамы: названия моделей там
+    сырые, из аукциона («MT-09 TRE ｰｻｰGT»), а рама надёжна.
+    """
+    BASE = "https://projapan.ru"
+    AUCTIONS = {1: "BDS", 2: "JBA", 3: "ARAI", 4: "AUCNET"}
+    STATUS = {(0, 0): FOR_SALE, (1, 1): SOLD, (1, 0): NOT_SOLD}
+    NO_PRICE = (0, 99990000)  # «старт не объявлен»
+
+    def _get(self, params):
+        url = self.BASE + "/api/lot/get-list?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.load(r)
+        time.sleep(1)  # сайт чужой, не торопимся
+        if d.get("status") != "OK":
+            raise ValueError(f"projapan: {str(d)[:200]}")
+        return d["response"]
+
+    def lots(self):
+        out = {}
+        for prefix in CFG["frames"]:
+            page = 1
+            while True:
+                r = self._get({"lang": "ru", "limit": 100, "page": page, "type": "no_sold",
+                               "filters[frame_number]": prefix})
+                for x in r["list"]:
+                    lot = self._lot(x)
+                    out[lot["id"]] = lot
+                if page * r["limit"] >= r["total_count"]:
+                    break
+                page += 1
+        return out
+
+    def _lot(self, x):
+        day = (x.get("auction_date") or "")[:10]
+        try:
+            day = datetime.strptime(day, "%Y-%m-%d")
+        except ValueError:
+            day = None
+        price = x.get("price_start") or 0
+        place = (x.get("place") or "").split("\n")[0]
+        auction = self.AUCTIONS.get(x.get("parser_type"), str(x.get("parser_type")))
+        ratings = [f"{r['title'].lower()} {r['value']}" for r in x.get("ratings") or []
+                   if r.get("parser_title") != "global" and r.get("value") not in (None, "", "0")]
+        lot = {"id": f"pj:{x['id']}", "url": f"{self.BASE}/lot/{x['id']}", "site": "projapan",
+               "brand": CFG["brand"], "model": (x.get("model") or {}).get("title") or x.get("parser_model") or "",
+               "year": x.get("year") or None, "rank": x.get("rank") or None,
+               "price": 0 if price in self.NO_PRICE else price, "AveragePrice": 0,
+               "availability": self.STATUS.get((x.get("auction_status"), x.get("sold_status")), NOT_SOLD),
+               "auction": auction, "auction_date": day.strftime("%d.%m.%Y") if day else None,
+               "bid": x.get("lot_number"), "mileage": x.get("mileage"), "volume": x.get("cubature"),
+               "pathImg": x.get("preview"), "final": x.get("price_end") or 0}
+        lot["detail"] = {
+            "price_start_jpy": lot["price"], "average_price_jpy": 0, "color": x.get("color"),
+            "auction_line": f"{auction} {place}".strip(), "lot_number": x.get("lot_number"),
+            "frame_number": x.get("frame_number"),
+            "auction_date_ts": int(day.replace(tzinfo=CFG["tz"]).timestamp()) if day else 0,
+            "ratings_line": ("Оценки по узлам: " + ", ".join(ratings)) if ratings else None,
+            "availability": lot["availability"], "price_finish_jpy": lot["final"]}
+        return lot
+
+    def result(self, key, frame):
+        """Итог торгов лота: проданные лежат в архиве (type=sold), ищем по раме."""
+        if not frame:
+            return {}
+        r = self._get({"lang": "ru", "limit": 100, "page": 1, "type": "sold", "filters[frame_number]": frame})
+        for x in r["list"]:
+            if f"pj:{x['id']}" == key:
+                return self._lot(x)["detail"]
+        return {}
+
+
+def same_lot_key(lot):
+    """Один и тот же лот на разных сайтах: аукцион + дата торгов + номер лота."""
+    digits = re.sub(r"\D", "", str(lot.get("bid") or ""))
+    return (lot.get("auction"), lot.get("auction_date"), int(digits)) if digits else None
+
+
+def stats_model(name):
+    """Названия модели на сайтах разные («Tracer 900 GT» на projapan = «MT-09 TRACER GT»)."""
+    compact = re.sub(r"\s+|ABS", "", (name or "").upper()).replace("YAMAHA", "")
+    if "900GT" in compact or compact == "MT-09TRACERGT":
+        return "MT-09TRACERGT"
+    if compact in ("MT-09TRACER", "TRACER900"):
+        return "MT-09TRACER"
+    return compact
+
+
 class Stats:
     """За сколько похожие лоты реально уходили — по архиву продаж того же сайта за год.
 
@@ -186,13 +281,13 @@ class Stats:
         """
         if self.sold is None:
             self._load()
-        model, year, rank = lot.get("model"), lot.get("year") or 0, lot.get("rank")
+        model, year, rank = stats_model(lot.get("model")), lot.get("year") or 0, lot.get("rank")
         for years, by_rank in ((1, True), (1, False), (2, False)):
             if by_rank and not rank:
                 continue
             prices = sorted(
                 s["price"] for s in self.sold
-                if s.get("model") == model and abs((s.get("year") or 0) - year) <= years
+                if stats_model(s.get("model")) == model and abs((s.get("year") or 0) - year) <= years
                 and (not by_rank or (s.get("rank") and abs(s["rank"] - rank) <= 1)))
             if len(prices) >= 3:
                 scope = f"{year - years}–{year + years}" + (f", оценка {rank - 1:g}–{rank + 1:g}" if by_rank else "")
@@ -261,7 +356,8 @@ def check(lot, stats=None):
     rank = lot.get("rank")
     if not CFG["model_re"].search(model):
         return f"модель {model}"
-    if year < CFG["min_year"]:
+    # Год неизвестен бывает у лотов projapan — их ищем по раме, а рама сама говорит о годах
+    if year and year < CFG["min_year"]:
         return f"год {year}"
     # Оценка 0 — лот ещё не осмотрен, обычно оценка появляется за пару дней до торгов.
     # Ждём её, но если торги уже завтра, а оценки всё нет, пусть человек глянет сам.
@@ -327,7 +423,7 @@ def lot_message(lot, detail, max_len, stats=None):
 
     e = html.escape
     head = [
-        f"🏍 <b>{e(lot.get('brand') or '')} {e(lot.get('model') or '')}</b> · {lot.get('year')}",
+        f"🏍 <b>{e(lot.get('brand') or '')} {e(lot.get('model') or '')}</b> · {lot.get('year') or 'год ?'}",
         f"Оценка <b>{rank or '?'}</b> · {fmt_num(lot.get('mileage') or 0)} км"
         f" · {lot.get('volume') or '?'} cc · {e(detail.get('color') or '')}",
         f"Торги <b>{e(lot.get('auction_date') or '?')}</b> · {e(detail.get('auction_line') or lot.get('auction') or '')}"
@@ -337,10 +433,14 @@ def lot_message(lot, detail, max_len, stats=None):
         f"Наш лимит (финал): <b>{fmt_jpy(limit)}</b>" + (f" · {e(rub_label)}: {e(rub)}" if rub else ""),
     ]
     head += flags
+    if lot.get("site") == "projapan":
+        head.append(f"🔎 нашёл на projapan.ru, на motoauction этого лота нет · рама {e(detail.get('frame_number') or '?')}")
 
     tail = []
     if detail.get("comment_auction_ru"):
         tail.append(f"💬 {e(detail['comment_auction_ru'])}")
+    if detail.get("ratings_line"):
+        tail.append(e(detail["ratings_line"]))
     tail += [e(x) for x in report_lines(detail)]
 
     text = "\n".join(head)
@@ -403,49 +503,62 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
     lots = {}
     for g in groups:
         for lot in site.lots(CFG["brand"], g):
-            lots[lot["id"]] = lot
+            lot["url"] = f"{SITE}/{lot['id']}"
+            lots[str(lot["id"])] = lot
     log(f"группы: {groups}; лотов: {len(lots)}")
     stats = Stats(site, groups)
 
+    # projapan добавляет только то, чего на motoauction нет. Его сбой не повод молчать
+    # о лотах с motoauction — просто проход без второго источника
+    projapan = ProJapan()
+    known = {same_lot_key(l) for l in lots.values()}
+    try:
+        extra = {k: l for k, l in projapan.lots().items() if same_lot_key(l) not in known}
+        log(f"projapan: нет на motoauction — {len(extra)}")
+        lots.update(extra)
+    except (OSError, ValueError) as e:
+        log("projapan не ответил:", repr(e))
+
     now = time.time()
-    for lot_id, lot in sorted(lots.items()):
-        key = str(lot_id)
+    for key, lot in sorted(lots.items()):
         if key in lots_state:
             continue
         if lot.get("availability") != FOR_SALE and not include_finished:
             continue
         reason = check(lot, stats)
         if verbose:
-            log(f"  {lot_id} {lot.get('model')} {lot.get('year')} r{lot.get('rank')} "
+            log(f"  {key} {lot.get('model')} {lot.get('year')} r{lot.get('rank')} "
                 f"av{lot.get('availability')} {lot.get('auction_date')}: {reason or 'ПОДХОДИТ'}")
         if reason:
             # отказ по старту/оценке не окончательный — они могут появиться позже,
             # поэтому в lots такие лоты не попадают и проверяются на каждом проходе
             if lot.get("availability") == FOR_SALE:
-                line = (f"{lot.get('model')} {lot.get('year')} · оценка {lot.get('rank') or '?'}"
+                line = (f"{lot.get('model')} {lot.get('year') or '?'} · оценка {lot.get('rank') or '?'}"
                         f" · торги {(lot.get('auction_date') or '?')[:5]} — {reason}")
                 # причина меняется (появилась оценка или старт), а время первого появления — нет
                 skipped.setdefault(key, {"at": int(now)})["line"] = line
             continue
-        detail = site.lot(lot_id)
+        detail = lot.get("detail") or site.lot(lot["id"])
         photo = lot.get("pathImg") or next(iter(detail.get("photos") or []), None)
         text = lot_message(lot, detail, 1024 if photo else 4096, stats)
-        msg_id = tg.send(text, photo=photo, button_url=f"{SITE}/{lot_id}")
+        msg_id = tg.send(text, photo=photo, button_url=lot["url"])
         lots_state[key] = {"at": int(now), "msg": msg_id, "date_ts": detail.get("auction_date_ts") or 0,
                            "done": lot.get("availability") != FOR_SALE}
-        log(f"отправлен лот {lot_id}")
+        if lot.get("site") == "projapan":
+            lots_state[key]["frame"] = detail.get("frame_number")  # по раме потом найдём итог
+        log(f"отправлен лот {key}")
 
     # итоги торгов по лотам, о которых уже писали
     for key, entry in lots_state.items():
         if entry.get("done") or not entry.get("date_ts") or entry["date_ts"] > now:
             continue
-        lot = lots.get(int(key))
+        lot = lots.get(key)
         if lot is not None and lot.get("availability") == FOR_SALE:
             continue
         try:
-            detail = site.lot(key)
-        except urllib.error.HTTPError as e:
-            log(f"лот {key}: {e.code}")
+            detail = projapan.result(key, entry.get("frame")) if key.startswith("pj:") else site.lot(key)
+        except (OSError, ValueError) as e:
+            log(f"лот {key}: {e!r}")
             continue
         if detail.get("availability") in (SOLD, NOT_SOLD):
             tg.send(result_message(detail), reply_to=entry.get("msg"))
@@ -462,7 +575,7 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
     # для ответа на «сходи посмотри»: что сейчас в продаже из уже присланного
     return {"for_sale": len(for_sale),
             "sent_now": [k for k, v in lots_state.items() if v["at"] == int(now)],
-            "open": [l for l in for_sale if str(l["id"]) in lots_state]}
+            "open": [l for k, l in lots.items() if l.get("availability") == FOR_SALE and k in lots_state]}
 
 
 def digest_due(state):
@@ -558,7 +671,7 @@ def scan_reply(summary):
     if summary["open"]:
         lines.append("\nУже присылал, торги ещё впереди:")
         lines += [f"• {html.escape(l.get('model') or '')} {l.get('year')} · оценка {l.get('rank') or '?'}"
-                  f" · торги {(l.get('auction_date') or '?')[:5]} — {SITE}/{l['id']}" for l in summary["open"]]
+                  f" · торги {(l.get('auction_date') or '?')[:5]} — {l['url']}" for l in summary["open"]]
     return "\n".join(lines)
 
 

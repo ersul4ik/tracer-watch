@@ -1,6 +1,6 @@
 # Tracer watch
 
-Checks the motoauction.online API every 3 hours, or right away when asked in Telegram, and sends new Yamaha Tracer lots that match the criteria:
+Checks Japanese motorcycle auction listings every 3 hours, or right away when asked in Telegram, and sends new Yamaha Tracer lots that match the criteria:
 
 - model: any model group with `TRACER` in its name (`MT-09 TRACER`, `MT-09 TRACER GT`, `TRACER 9 GT+`, which also covers `TRACER 9GT`);
 - year 2018 or newer;
@@ -16,6 +16,20 @@ Each alert carries a photo, year, grade, mileage, auction date, starting price, 
 Once a day, at 10:00 Bishkek time, a digest arrives: how many Tracer lots are on sale, how many alerts went out, and which new lots were skipped and why. There is deliberately no "nothing found" message after every pass: at one pass per 5 minutes that would be 288 messages a day, and real finds would drown in them. The digest doubles as a heartbeat instead: if it does not arrive, something is broken.
 
 The bot writes to Telegram in Russian. No dependencies, Python 3.9+ only.
+
+## Sources
+
+| Site | Auctions | How | Why |
+|---|---|---|---|
+| [motoauction.online](https://motoauction.online) | BDS, JBA, some AUCNET | JSON API behind a token from `/api/init` | main source: grades, inspector notes and the sales archive the price estimate is built from |
+| [projapan.ru](https://projapan.ru) | BDS, JBA (ARAI and AUCNET too, but see below) | open JSON API, `/api/lot/get-list`, searched by frame prefix | catches BDS and JBA lots that never reach motoauction: on 27.10 there were five, among them a 2020 GT starting at ¥550k |
+
+The same lot on both sites is matched by auction, date and lot number, and only alerted once. projapan is searched by frame prefix (`FRAMES`, default `RN51J,RN70J,RN99J,RNA1J`) because its model names are raw auction listings. If projapan is down, the pass carries on with motoauction alone.
+
+Looked at and left out:
+- **motovulkan.com** (BDS, JBA, AUCNET): works, but has no API — parsing its Next.js pages breaks with any redesign, and it found nothing projapan did not.
+- **motorom.ru** (adds ARAI and upcoming AUCNET): its robots.txt disallows the search pages. ARAI is small and mostly scooters, and ARAI lots on projapan carry no frame number.
+- **bike-place.ru**: BDS and JBA only, nothing new.
 
 ## Commands
 

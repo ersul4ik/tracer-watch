@@ -49,6 +49,7 @@ jobs:
           NEAR_RATIO: ${{ vars.NEAR_RATIO }}
           MODEL_PATTERN: ${{ vars.MODEL_PATTERN }}
           SCAN_EVERY_MIN: ${{ vars.SCAN_EVERY_MIN }}
+          FRAMES: ${{ vars.FRAMES }}
           DIGEST_HOUR: ${{ vars.DIGEST_HOUR }}
           TZ_OFFSET_HOURS: ${{ vars.TZ_OFFSET_HOURS }}
         run: |
