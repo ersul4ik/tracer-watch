@@ -46,6 +46,7 @@ jobs:
           TOP_RANK: ${{ vars.TOP_RANK }}
           TOP_LIMIT_JPY: ${{ vars.TOP_LIMIT_JPY }}
           MAX_AVG_RATIO: ${{ vars.MAX_AVG_RATIO }}
+          NEAR_RATIO: ${{ vars.NEAR_RATIO }}
           MODEL_PATTERN: ${{ vars.MODEL_PATTERN }}
           DIGEST_HOUR: ${{ vars.DIGEST_HOUR }}
           TZ_OFFSET_HOURS: ${{ vars.TZ_OFFSET_HOURS }}

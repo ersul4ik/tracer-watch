@@ -70,8 +70,11 @@ CFG = {
     "top_rank": env_float("TOP_RANK", 6),
     "top_limit": env_int("TOP_LIMIT_JPY", 730_000),
     # Пропускать лот, если средняя цена по похожим уже выше лимита в столько раз.
-    # 0 — не фильтровать по средней.
-    "max_avg_ratio": env_float("MAX_AVG_RATIO", 1.4),
+    # 0 — не фильтровать по средней. Средняя на сайте завышена: у GT 2019 она ~1.07 млн
+    # при медиане продаж 838к, поэтому порог щедрый.
+    "max_avg_ratio": env_float("MAX_AVG_RATIO", 1.6),
+    # Старт выше лимита не больше чем во столько раз — лот всё равно присылается как «почти подходит»
+    "near_ratio": env_float("NEAR_RATIO", 1.1),
     "state": Path(env_str("STATE_FILE", HERE / "state.json")),
     # Сколько минут сайт может не отвечать, прежде чем бот скажет об этом в Telegram
     "alert_after_min": env_int("ALERT_AFTER_MIN", 30),
@@ -196,17 +199,29 @@ def check(lot):
         return f"модель {model}"
     if year < CFG["min_year"]:
         return f"год {year}"
-    # rank пустой бывает у лотов без листа осмотра — такие не отсекаем, пусть человек глянет
-    if rank is not None and rank < CFG["min_rank"]:
+    # Оценка 0 — лот ещё не осмотрен, обычно оценка появляется за пару дней до торгов.
+    # Ждём её, но если торги уже завтра, а оценки всё нет, пусть человек глянет сам.
+    if not rank:
+        if days_to_auction(lot) > 1:
+            return "оценки пока нет"
+    elif rank < CFG["min_rank"]:
         return f"оценка {rank}"
     limit = limit_for(rank)
     start = lot.get("price") or 0
-    if lot.get("availability") == FOR_SALE and start > limit:
+    if lot.get("availability") == FOR_SALE and start > limit * CFG["near_ratio"]:
         return f"старт {fmt_jpy(start)} выше лимита"
     avg = lot.get("AveragePrice") or 0
     if CFG["max_avg_ratio"] and avg > limit * CFG["max_avg_ratio"]:
         return f"средняя {fmt_jpy(avg)} сильно выше лимита"
     return None
+
+
+def days_to_auction(lot):
+    try:
+        day = datetime.strptime(lot.get("auction_date") or "", "%d.%m.%Y").date()
+    except ValueError:
+        return 0  # дата непонятна — считаем, что торги скоро, и не ждём
+    return (day - datetime.now(CFG["tz"]).date()).days
 
 
 def report_lines(detail):
@@ -228,23 +243,26 @@ def lot_message(lot, detail, max_len):
     rub = (detail.get("display_price") or {}).get("display")
     rub_label = (detail.get("display_price") or {}).get("label") or "Под ключ"
     flags = []
-    if rank is not None and rank >= CFG["top_rank"]:
+    if start > limit:
+        flags.append(f"🟡 почти подходит: старт выше лимита на {fmt_jpy(start - limit)}")
+    if rank and rank >= CFG["top_rank"]:
         flags.append("🔥 топ-оценка")
+    if not rank:
+        flags.append("⏳ оценки пока нет, торги вот-вот")
     if avg and avg > limit:
         flags.append("⚠️ средняя выше лимита")
 
     e = html.escape
     head = [
         f"🏍 <b>{e(lot.get('brand') or '')} {e(lot.get('model') or '')}</b> · {lot.get('year')}",
-        f"Оценка <b>{rank if rank is not None else '?'}</b> · {fmt_num(lot.get('mileage') or 0)} км"
+        f"Оценка <b>{rank or '?'}</b> · {fmt_num(lot.get('mileage') or 0)} км"
         f" · {lot.get('volume') or '?'} cc · {e(detail.get('color') or '')}",
         f"Торги <b>{e(lot.get('auction_date') or '?')}</b> · {e(detail.get('auction_line') or lot.get('auction') or '')}"
         f" · лот {e(str(detail.get('lot_number') or lot.get('bid') or ''))}",
         f"Старт: {fmt_jpy(start) if start else 'пока неизвестен'} · средняя: {fmt_jpy(avg)}",
         f"Наш лимит: <b>{fmt_jpy(limit)}</b>" + (f" · {e(rub_label)}: {e(rub)}" if rub else ""),
     ]
-    if flags:
-        head.append(" ".join(flags))
+    head += flags
 
     tail = []
     if detail.get("comment_auction_ru"):
@@ -328,10 +346,11 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
         if reason:
             # отказ по старту/средней не окончательный — цена может появиться позже,
             # поэтому в lots такие лоты не попадают и проверяются на каждом проходе
-            if lot.get("availability") == FOR_SALE and key not in skipped:
-                skipped[key] = {"at": int(now), "line": (
-                    f"{lot.get('model')} {lot.get('year')} · оценка {lot.get('rank')}"
-                    f" · торги {(lot.get('auction_date') or '?')[:5]} — {reason}")}
+            if lot.get("availability") == FOR_SALE:
+                line = (f"{lot.get('model')} {lot.get('year')} · оценка {lot.get('rank') or '?'}"
+                        f" · торги {(lot.get('auction_date') or '?')[:5]} — {reason}")
+                # причина меняется (появилась оценка или старт), а время первого появления — нет
+                skipped.setdefault(key, {"at": int(now)})["line"] = line
             continue
         detail = site.lot(lot_id)
         photo = lot.get("pathImg") or next(iter(detail.get("photos") or []), None)

@@ -5,8 +5,10 @@ Polls the motoauction.online API every 5 minutes and sends new Yamaha Tracer lot
 - model: any model group with `TRACER` in its name (`MT-09 TRACER`, `MT-09 TRACER GT`, `TRACER 9 GT+`, which also covers `TRACER 9GT`);
 - year 2018 or newer;
 - auction grade 4 or higher;
-- starting price within the limit: ¥700,000, or ¥730,000 for grade 6 and up;
-- average price for similar lots no higher than 1.4 × the limit. Above that, the lot almost certainly sells for more.
+- starting price within the limit: ¥700,000, or ¥730,000 for grade 6 and up. A start up to 10% over the limit still gets through, flagged as a near miss;
+- average price for similar lots no higher than 1.6 × the limit. The site's average runs high (about ¥1.07M for a 2019 GT against a median sale of ¥838k), hence the generous margin.
+
+A lot that has not been inspected yet shows grade 0. The bot waits for the grade, and sends the lot as is if the auction is a day away and there is still none.
 
 Each alert carries a photo, year, grade, mileage, auction date, starting and average price, the site's landed-cost estimate, the auction comment, the inspector's notes per section, and an "open lot" button. Once the auction is over, the bot replies to its own alert with the outcome: sold and for how much, or not sold. If the site stays unreachable for more than 30 minutes, the bot sends a warning, and another message once it is back.
 
@@ -82,6 +84,6 @@ gh run list -w watch.yml -L 5              # latest runs
 
 Run logs: [github.com/ersul4ik/tracer-watch/actions](https://github.com/ersul4ik/tracer-watch/actions).
 
-The default criteria live in the code. On the server they can be overridden in Settings → Secrets and variables → Actions → **Variables**: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `MIN_YEAR`, `MIN_RANK`, `TOP_RANK`, `MAX_AVG_RATIO`, `MODEL_PATTERN`, plus the digest hour `DIGEST_HOUR` (`-1` turns it off) and the time zone `TZ_OFFSET_HOURS`. For example, `gh variable set LIMIT_JPY -b 750000`.
+The default criteria live in the code. On the server they can be overridden in Settings → Secrets and variables → Actions → **Variables**: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `MIN_YEAR`, `MIN_RANK`, `TOP_RANK`, `NEAR_RATIO`, `MAX_AVG_RATIO`, `MODEL_PATTERN`, plus the digest hour `DIGEST_HOUR` (`-1` turns it off) and the time zone `TZ_OFFSET_HOURS`. For example, `gh variable set LIMIT_JPY -b 750000`.
 
 What has already been sent is kept in `state.json` on the `state` branch. Deleting a lot from it makes the bot send that lot again if it is still on sale.
