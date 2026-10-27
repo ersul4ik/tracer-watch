@@ -11,6 +11,13 @@ Checks Japanese motorcycle auction listings every 3 hours, or right away when as
 
 A lot that has not been inspected yet shows grade 0. The bot waits for the grade, and sends the lot as is if the auction is a day away and there is still none. Once the grade of such a lot comes out, the bot replies to its alert with the inspection sheet and whether the lot still qualifies.
 
+Lots that end unsold although the last bid was within the limit get their own alert, since a buyer at that price existed and only the seller said no. Such lots are often worth haggling over through the dealer for a day or two after the auction, and they tend to come back: 207900 went unsold at a ¥628k bid and sold for ¥590k a week later. So:
+
+- a Tracer that meets the criteria and went unsold in the last two days with a bid within the limit is sent even if the price forecast had filtered it out before the auction, with a hint to negotiate. If the bot already alerted about it, the outcome reply says the same;
+- for two months after that the bike is watched by frame number, the one thing that stays when it is relisted under a new lot number. When it is back on either site, the bot sends it as a reply to the earlier alert, with the previous bid, skipping the price forecast.
+
+Unsold lots come from the motoauction archive only: projapan drops them from its listings.
+
 Inspection notes in alerts come from both sources (projapan translates BDS sheets; for JBA it only has section grades). Serious notes — noises, leaks, failed seals, parts that need replacing — go first, marked with ❗, ahead of scratches and light rust.
 
 Each alert carries a photo, year, grade, mileage, auction date, starting price, what similar lots usually sell for (median, number of sales and range), the site's landed-cost estimate, the auction comment, the inspector's notes per section, and an "open lot" button. Once the auction is over, the bot replies to its own alert with the outcome: sold and for how much, or not sold. If the site stays unreachable for more than 30 minutes, the bot sends a warning, and another message once it is back.

@@ -305,23 +305,30 @@ class Stats:
     """
 
     def __init__(self, site, groups):
-        self.site, self.groups, self.sold = site, groups, None
+        self.site, self.groups, self.sold, self.unsold = site, groups, None, None
 
     def _load(self):
         cutoff = datetime.now(CFG["tz"]).date() - timedelta(days=365)
         rows = {}
         for g in self.groups:
             for lot in self.site.lots(CFG["brand"], g, statistics=True):
+                lot["url"] = f"{SITE}/{lot['id']}"
                 rows[lot["id"]] = lot
-        self.sold = []
+        self.sold, self.unsold = [], []
         for lot in rows.values():
-            try:
-                day = datetime.strptime(lot.get("auction_date") or "", "%d.%m.%Y").date()
-            except ValueError:
+            day = auction_day(lot)
+            if not day or day < cutoff or not lot.get("price"):
                 continue
-            if lot.get("availability") == SOLD and lot.get("price") and day >= cutoff:
+            if lot.get("availability") == SOLD:
                 self.sold.append(lot)
-        log(f"архив продаж: {len(self.sold)} лотов за год")
+            elif lot.get("availability") == NOT_SOLD:
+                self.unsold.append(lot)  # price у них — последняя ставка
+        log(f"архив продаж: {len(self.sold)} лотов за год, не продано {len(self.unsold)}")
+
+    def not_sold(self):
+        if self.unsold is None:
+            self._load()
+        return self.unsold
 
     def estimate(self, lot):
         """Медиана финальных цен похожих лотов или None, если похожих меньше трёх.
@@ -394,12 +401,8 @@ def expected_price(lot, stats):
     return est["median"] if est else (lot.get("AveragePrice") or 0), est
 
 
-def check(lot, stats=None):
-    """Возвращает None, если лот подходит, иначе причину отказа.
-
-    Лимит — это финальная цена. Старт — только нижняя граница финала, а угадывает финал
-    медиана продаж похожих лотов.
-    """
+def basic_reason(lot):
+    """Модель, год и оценка — то, что не зависит от цены."""
     model = lot.get("model") or ""
     year = lot.get("year") or 0
     rank = lot.get("rank")
@@ -415,6 +418,19 @@ def check(lot, stats=None):
             return "оценки пока нет"
     elif rank < CFG["min_rank"]:
         return f"оценка {rank}"
+    return None
+
+
+def check(lot, stats=None):
+    """Возвращает None, если лот подходит, иначе причину отказа.
+
+    Лимит — это финальная цена. Старт — только нижняя граница финала, а угадывает финал
+    медиана продаж похожих лотов.
+    """
+    reason = basic_reason(lot)
+    if reason:
+        return reason
+    rank = lot.get("rank")
     limit = limit_for(rank)
     start = lot.get("price") or 0
     if lot.get("availability") == FOR_SALE and start > limit * CFG["near_ratio"]:
@@ -427,10 +443,35 @@ def check(lot, stats=None):
     return None
 
 
-def days_to_auction(lot):
+def unsold_bid(lot):
+    """Последняя ставка непроданного лота, если она уложилась в лимит, иначе 0.
+
+    Такой лот — шанс: покупатель за наши деньги нашёлся, не согласился продавец.
+    С ним можно поторговаться после торгов, а перевыставляют его часто дешевле
+    (207900 не отдали за 628к — через неделю ушёл за 590к).
+    """
+    bid = lot.get("price") or 0
+    if lot.get("availability") == NOT_SOLD and 0 < bid <= limit_for(lot.get("rank")) and not basic_reason(lot):
+        return bid
+    return 0
+
+
+def frame_key(lot):
+    """Рама — единственное, что у мотоцикла не меняется при перевыставлении: номер лота новый."""
+    frame = lot.get("frame") or (lot.get("detail") or {}).get("frame_number") or ""
+    return re.sub(r"[^A-Z0-9]", "", frame.upper()) or None
+
+
+def auction_day(lot):
     try:
-        day = datetime.strptime(lot.get("auction_date") or "", "%d.%m.%Y").date()
+        return datetime.strptime(lot.get("auction_date") or "", "%d.%m.%Y").date()
     except ValueError:
+        return None
+
+
+def days_to_auction(lot):
+    day = auction_day(lot)
+    if not day:
         return 0  # дата непонятна — считаем, что торги скоро, и не ждём
     return (day - datetime.now(CFG["tz"]).date()).days
 
@@ -476,7 +517,7 @@ def fit(head, tail, max_len):
     return text
 
 
-def lot_message(lot, detail, max_len, stats=None):
+def lot_message(lot, detail, max_len, stats=None, intro=()):
     rank = lot.get("rank")
     limit = limit_for(rank)
     start = detail.get("price_start_jpy") or lot.get("price") or 0
@@ -501,7 +542,7 @@ def lot_message(lot, detail, max_len, stats=None):
         expect_line = f"Средняя с сайта: {fmt_jpy(avg)} (своих продаж для сравнения мало)"
 
     e = html.escape
-    head = [
+    head = [*intro,
         f"🏍 <b>{e(lot.get('brand') or '')} {e(lot.get('model') or '')}</b> · {lot.get('year') or 'год ?'}",
         f"Оценка <b>{rank or '?'}</b> · {fmt_num(lot.get('mileage') or 0)} км"
         f" · {lot.get('volume') or '?'} cc · {e(detail.get('color') or '')}",
@@ -535,6 +576,10 @@ def grade_message(lot, detail, stats):
     return fit(head, tail, 4096)
 
 
+NEGOTIATE = ("Можно попросить дилера поторговаться: после торгов продавцы иногда отдают чуть дороже ставки, "
+             "но обычно только день-два. Если мотоцикл выставят снова, напишу.")
+
+
 def result_message(detail):
     av = detail.get("availability")
     final = detail.get("price_finish_jpy") or detail.get("price_jpy") or 0
@@ -543,9 +588,30 @@ def result_message(detail):
         s = f"✅ Продан за <b>{fmt_jpy(final)}</b>"
     else:
         s = f"❌ Не продан, последняя ставка {fmt_jpy(final)}"
+        if 0 < final <= limit_for(detail.get("rank")):
+            s += "\n🤝 Покупатель в наш лимит нашёлся, не согласился продавец. " + NEGOTIATE
     if rub and av == SOLD:
         s += f" (под ключ {html.escape(rub)})"
     return s
+
+
+def serious_warning(detail):
+    if any(x.startswith("❗") for x in inspection_lines(detail)):
+        return ["❗ В листе осмотра серьёзные замечания — возможно, ставки низкие из-за них, а не по везению."]
+    return []
+
+
+def unsold_intro(prev, detail):
+    return [f"🤝 <b>Не продан: ставка дошла до {fmt_jpy(prev['price'])}, продавец не отдал</b>", NEGOTIATE,
+            *serious_warning(detail), ""]
+
+
+def relist_intro(prev, detail):
+    return [f"🔁 <b>Снова на торгах.</b> {html.escape(prev.get('auction_date') or '?')} на "
+            f"{html.escape(prev.get('auction') or '?')} его не продали: ставка дошла до "
+            f"<b>{fmt_jpy(prev['price'])}</b>, продавец хотел больше",
+            "Присылаю, даже если похожие обычно уходят дороже: свою цену продавец уже не получил и может уступить.",
+            *serious_warning(detail), ""]
 
 
 def load_state():
@@ -620,16 +686,33 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
             if same and same_of(k) == same:
                 e[field] = True
 
+    def copies_of(lot):
+        """Ключи записей state, отправленных об этом лоте — с любого из сайтов."""
+        key, same = str(lot["id"]), same_lot_key(lot)
+        return [k for k in lots_state if k == key or (same and same_of(k) == same)]
+
+    # Не проданные за два месяца, хотя ставка уложилась в лимит: рама → последний такой лот.
+    # projapan непроданных не показывает — они просто пропадают из выдачи, так что только motoauction
+    watched = {}
+    for lot in sorted(stats.not_sold(), key=auction_day):
+        if unsold_bid(lot) and frame_key(lot) and days_to_auction(lot) >= -60:
+            watched[frame_key(lot)] = lot
+
     now = time.time()
     for key, lot in sorted(lots.items()):
         if key in lots_state or same_lot_key(lot) in sent_same:
             continue
         if lot.get("availability") != FOR_SALE and not include_finished:
             continue
-        reason = check(lot, stats)
+        # Тот же мотоцикл, что недавно не продали в наш лимит, снова выставлен
+        prev = watched.get(frame_key(lot))
+        relist = bool(prev and lot.get("availability") == FOR_SALE
+                      and (auction_day(lot) or auction_day(prev)) > auction_day(prev))
+        reason = basic_reason(lot) if relist else check(lot, stats)
         if verbose:
             log(f"  {key} {lot.get('model')} {lot.get('year')} r{lot.get('rank')} "
-                f"av{lot.get('availability')} {lot.get('auction_date')}: {reason or 'ПОДХОДИТ'}")
+                f"av{lot.get('availability')} {lot.get('auction_date')}: {reason or 'ПОДХОДИТ'}"
+                + (f" (перевыставлен, был {prev['id']})" if relist else ""))
         if reason:
             # отказ по старту/оценке не окончательный — они могут появиться позже,
             # поэтому в lots такие лоты не попадают и проверяются на каждом проходе
@@ -641,14 +724,18 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
             continue
         detail = projapan.enrich(lot) if lot.get("site") == "projapan" else site.lot(lot["id"])
         photo = lot.get("pathImg") or next(iter(detail.get("photos") or []), None)
-        text = lot_message(lot, detail, 1024 if photo else 4096, stats)
-        msg_id = tg.send(text, photo=photo, button_url=lot["url"])
+        text = lot_message(lot, detail, 1024 if photo else 4096, stats, intro=relist_intro(prev, detail) if relist else ())
+        # перевыставленный — ответом на прошлое сообщение о нём, если оно было
+        reply_to = next((lots_state[k].get("msg") for k in copies_of(prev)), None) if relist else None
+        msg_id = tg.send(text, photo=photo, button_url=lot["url"], reply_to=reply_to)
         lots_state[key] = {"at": int(now), "msg": msg_id, "date_ts": detail.get("auction_date_ts") or 0,
                            "done": lot.get("availability") != FOR_SALE, "graded": bool(lot.get("rank")),
                            "same": same_lot_key(lot)}
         if lot.get("site") == "projapan":
             lots_state[key]["frame"] = detail.get("frame_number")  # по раме потом найдём итог
-        log(f"отправлен лот {key}")
+        if relist:
+            lots_state[key]["relist_of"] = str(prev["id"])
+        log(f"отправлен лот {key}" + (f", перевыставленный {prev['id']}" if relist else ""))
 
     # Лоты, ушедшие без оценки: когда она появилась — дописать ответом, что в листе осмотра.
     # У старых записей поля graded нет — они уходили уже с оценкой
@@ -684,6 +771,29 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
             entry["done"] = True
         elif now - entry["date_ts"] > 3 * 86400:
             entry["done"] = True  # итог так и не появился — перестаём спрашивать
+
+    # Только что не проданные, хотя ставка уложилась в лимит: пока продавец не остыл, можно торговаться.
+    # Прогноз цены такие лоты до торгов отсеивал, так что обычно о них ещё не писали
+    for lot in watched.values():
+        key, same, sent = str(lot["id"]), same_lot_key(lot), copies_of(lot)
+        if days_to_auction(lot) < -2 or any(lots_state[k].get("done") for k in sent):
+            continue
+        try:
+            detail = site.lot(lot["id"])
+        except (OSError, ValueError) as e:
+            log(f"лот {key}: {e!r}")
+            continue
+        if sent:
+            # писали о его копии с projapan — а там итога непроданного не узнать
+            tg.send(result_message(detail), reply_to=lots_state[sent[0]].get("msg"))
+            settle_copies(sent[0], "done")
+            continue
+        photo = lot.get("pathImg") or next(iter(detail.get("photos") or []), None)
+        text = lot_message(lot, detail, 1024 if photo else 4096, stats, intro=unsold_intro(lot, detail))
+        lots_state[key] = {"at": int(now), "msg": tg.send(text, photo=photo, button_url=lot["url"]),
+                           "date_ts": detail.get("auction_date_ts") or 0, "done": True, "graded": True,
+                           "same": same, "unsold": lot["price"]}
+        log(f"отправлен непроданный лот {key}")
 
     if first_run:
         # Всё, что лежит на сайте к первому запуску, — не «новое за сутки»
