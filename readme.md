@@ -1,32 +1,45 @@
 # Tracer watch
 
-Polls the motoauction.online API every 5 minutes and sends new Yamaha Tracer lots that match the criteria to Telegram:
+Checks the motoauction.online API every 3 hours, or right away when asked in Telegram, and sends new Yamaha Tracer lots that match the criteria:
 
 - model: any model group with `TRACER` in its name (`MT-09 TRACER`, `MT-09 TRACER GT`, `TRACER 9 GT+`, which also covers `TRACER 9GT`);
 - year 2018 or newer;
 - auction grade 4 or higher;
-- starting price within the limit: ¥700,000, or ¥730,000 for grade 6 and up. A start up to 10% over the limit still gets through, flagged as a near miss;
-- average price for similar lots no higher than 1.6 × the limit. The site's average runs high (about ¥1.07M for a 2019 GT against a median sale of ¥838k), hence the generous margin.
+- the limit is the final hammer price: ¥700,000, or ¥730,000 for grade 6 and up;
+- the starting price is only a floor for the final one, so a start over the limit rules the lot out. A start up to 10% over still gets through, flagged as a near miss: it cannot be had within the limit, but might be worth raising it for;
+- the expected final price is no higher than 1.3 × the limit. The bot works it out itself from the same site's archive of past sales: the median of the same model within ±1 year and ±1 grade over the last year, widening the match when fewer than three sales qualify. The site's own "average price" runs high (about ¥1.07M for a 2019 GT against a median sale of ¥838k), so it is used only when the archive has nothing comparable.
 
 A lot that has not been inspected yet shows grade 0. The bot waits for the grade, and sends the lot as is if the auction is a day away and there is still none.
 
-Each alert carries a photo, year, grade, mileage, auction date, starting and average price, the site's landed-cost estimate, the auction comment, the inspector's notes per section, and an "open lot" button. Once the auction is over, the bot replies to its own alert with the outcome: sold and for how much, or not sold. If the site stays unreachable for more than 30 minutes, the bot sends a warning, and another message once it is back.
+Each alert carries a photo, year, grade, mileage, auction date, starting price, what similar lots usually sell for (median, number of sales and range), the site's landed-cost estimate, the auction comment, the inspector's notes per section, and an "open lot" button. Once the auction is over, the bot replies to its own alert with the outcome: sold and for how much, or not sold. If the site stays unreachable for more than 30 minutes, the bot sends a warning, and another message once it is back.
 
 Once a day, at 10:00 Bishkek time, a digest arrives: how many Tracer lots are on sale, how many alerts went out, and which new lots were skipped and why. There is deliberately no "nothing found" message after every pass: at one pass per 5 minutes that would be 288 messages a day, and real finds would drown in them. The digest doubles as a heartbeat instead: if it does not arrive, something is broken.
 
 The bot writes to Telegram in Russian. No dependencies, Python 3.9+ only.
+
+## Commands
+
+Messages to the bot from the configured chat (anyone else is ignored):
+
+- «сходи посмотри» (or anything with «проверь», «глянь», `/check`) — check the site now and reply with what is on sale and which already-sent lots are still ahead;
+- `/status` — when the last check was and when the next one is due;
+- anything else — a short help.
+
+Replies come within about 5 minutes, which is how often the bot wakes up.
 
 ## How it runs
 
 ```
 cron-job.org, every 5 min
    ↓  POST api.github.com/.../actions/workflows/watch.yml/dispatches
-GitHub Actions: a single pass of tracer_watch.py (~15 s)
-   ↓  new matching lots → Telegram
+GitHub Actions: tracer_watch.py (a few seconds)
+   ↓  any messages to the bot? (Telegram getUpdates)
+   ↓  site visited only if asked, 3 hours have passed, or the morning digest is due
+   ↓  new matching lots and replies → Telegram
    ↓  what has been sent → the state branch (committed only when something changed)
 ```
 
-There is no server of its own, so nothing can fall asleep. The keep-alive ping is the workflow dispatch itself. The workflow also has a schedule of its own, every 30 minutes, but only as a fallback: GitHub runs scheduled workflows late and disables them after 60 days without commits.
+There is no server of its own, so nothing can fall asleep. The keep-alive ping is the workflow dispatch itself. Waking up every 5 minutes is only there so that commands get answered: most runs ask Telegram for new messages and stop, and the auction site sees one visit every 3 hours (`SCAN_EVERY_MIN`). Lots show up at least a day before the auction, so that is plenty. The workflow also has a schedule of its own, every 30 minutes, but only as a fallback: GitHub runs scheduled workflows late and disables them after 60 days without commits.
 
 Why not an always-on web service on Render's free tier: the 750 free hours a month are per account, and one service awake around the clock already takes 744 of them. A second one would run the quota out by mid-month, and Render would suspend both.
 
@@ -84,6 +97,6 @@ gh run list -w watch.yml -L 5              # latest runs
 
 Run logs: [github.com/ersul4ik/tracer-watch/actions](https://github.com/ersul4ik/tracer-watch/actions).
 
-The default criteria live in the code. On the server they can be overridden in Settings → Secrets and variables → Actions → **Variables**: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `MIN_YEAR`, `MIN_RANK`, `TOP_RANK`, `NEAR_RATIO`, `MAX_AVG_RATIO`, `MODEL_PATTERN`, plus the digest hour `DIGEST_HOUR` (`-1` turns it off) and the time zone `TZ_OFFSET_HOURS`. For example, `gh variable set LIMIT_JPY -b 750000`.
+The default criteria live in the code. On the server they can be overridden in Settings → Secrets and variables → Actions → **Variables**: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `MIN_YEAR`, `MIN_RANK`, `TOP_RANK`, `NEAR_RATIO`, `EXPECT_RATIO`, `MODEL_PATTERN`, how often to check the site `SCAN_EVERY_MIN`, plus the digest hour `DIGEST_HOUR` (`-1` turns it off) and the time zone `TZ_OFFSET_HOURS`. For example, `gh variable set LIMIT_JPY -b 750000`.
 
 What has already been sent is kept in `state.json` on the `state` branch. Deleting a lot from it makes the bot send that lot again if it is still on sale.
