@@ -283,7 +283,8 @@ class ProJapan:
 def same_lot_key(lot):
     """Один и тот же лот на разных сайтах: аукцион + дата торгов + номер лота."""
     digits = re.sub(r"\D", "", str(lot.get("bid") or ""))
-    return (lot.get("auction"), lot.get("auction_date"), int(digits)) if digits else None
+    auction = {"IAUC": "AUCNET"}.get(lot.get("auction"), lot.get("auction"))  # motoauction зовёт AUCNET по его площадке
+    return f"{auction}|{lot.get('auction_date')}|{int(digits)}" if digits else None
 
 
 def stats_model(name):
@@ -594,16 +595,34 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
     # о лотах с motoauction — просто проход без второго источника
     projapan = ProJapan()
     known = {same_lot_key(l) for l in lots.values()}
+    everywhere = dict(lots)  # и копии с обоих сайтов — чтобы найти лот, о котором уже писали
     try:
-        extra = {k: l for k, l in projapan.lots().items() if same_lot_key(l) not in known}
+        pj = projapan.lots()
+        everywhere.update(pj)
+        extra = {k: l for k, l in pj.items() if same_lot_key(l) not in known}
         log(f"projapan: нет на motoauction — {len(extra)}")
         lots.update(extra)
     except (OSError, ValueError) as e:
         log("projapan не ответил:", repr(e))
 
+    def same_of(key):
+        entry, lot = lots_state.get(key) or {}, everywhere.get(key)
+        return entry.get("same") or (same_lot_key(lot) if lot else None)
+
+    # Лот мог уйти с одного сайта, а потом появиться на другом: projapan показал его
+    # раньше, motoauction добавил позже. Второй раз о нём писать не надо
+    sent_same = {same_of(k) for k in lots_state} - {None}
+
+    def settle_copies(key, field):
+        """Дополнение или итог отправлены по одной копии лота — остальным уже не нужно."""
+        same = same_of(key)
+        for k, e in lots_state.items():
+            if same and same_of(k) == same:
+                e[field] = True
+
     now = time.time()
     for key, lot in sorted(lots.items()):
-        if key in lots_state:
+        if key in lots_state or same_lot_key(lot) in sent_same:
             continue
         if lot.get("availability") != FOR_SALE and not include_finished:
             continue
@@ -625,7 +644,8 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
         text = lot_message(lot, detail, 1024 if photo else 4096, stats)
         msg_id = tg.send(text, photo=photo, button_url=lot["url"])
         lots_state[key] = {"at": int(now), "msg": msg_id, "date_ts": detail.get("auction_date_ts") or 0,
-                           "done": lot.get("availability") != FOR_SALE, "graded": bool(lot.get("rank"))}
+                           "done": lot.get("availability") != FOR_SALE, "graded": bool(lot.get("rank")),
+                           "same": same_lot_key(lot)}
         if lot.get("site") == "projapan":
             lots_state[key]["frame"] = detail.get("frame_number")  # по раме потом найдём итог
         log(f"отправлен лот {key}")
@@ -633,7 +653,7 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
     # Лоты, ушедшие без оценки: когда она появилась — дописать ответом, что в листе осмотра.
     # У старых записей поля graded нет — они уходили уже с оценкой
     for key, entry in lots_state.items():
-        lot = lots.get(key)
+        lot = everywhere.get(key)
         if entry.get("done") or entry.get("graded", True) or not lot or not lot.get("rank"):
             continue
         try:
@@ -642,6 +662,7 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
             log(f"лот {key}: {e!r}")
             continue
         tg.send(grade_message(lot, detail, stats), reply_to=entry.get("msg"))
+        settle_copies(key, "graded")
         entry["graded"] = True
         log(f"дописана оценка лота {key}")
 
@@ -649,7 +670,7 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
     for key, entry in lots_state.items():
         if entry.get("done") or not entry.get("date_ts") or entry["date_ts"] > now:
             continue
-        lot = lots.get(key)
+        lot = everywhere.get(key)
         if lot is not None and lot.get("availability") == FOR_SALE:
             continue
         try:
@@ -659,6 +680,7 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
             continue
         if detail.get("availability") in (SOLD, NOT_SOLD):
             tg.send(result_message(detail), reply_to=entry.get("msg"))
+            settle_copies(key, "done")
             entry["done"] = True
         elif now - entry["date_ts"] > 3 * 86400:
             entry["done"] = True  # итог так и не появился — перестаём спрашивать
