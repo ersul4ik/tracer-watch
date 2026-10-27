@@ -13,6 +13,7 @@ import argparse
 import html
 import http.cookiejar
 import json
+import math
 import os
 import re
 import sys
@@ -323,30 +324,63 @@ class Stats:
                 self.sold.append(lot)
             elif lot.get("availability") == NOT_SOLD:
                 self.unsold.append(lot)  # price у них — последняя ставка
-        log(f"архив продаж: {len(self.sold)} лотов за год, не продано {len(self.unsold)}")
+        self.per_km = self._fit_mileage()
+        log(f"архив продаж: {len(self.sold)} лотов за год, не продано {len(self.unsold)}; "
+            f"10 тыс. км пробега — минус {(1 - math.exp(-self.per_km * 10)) * 100:.0f}% цены")
+
+    def _fit_mileage(self):
+        """Насколько дешевеет лот с каждой тысячей км: наклон логарифма цены по пробегу внутри групп
+        «модель + год + оценка». По архиву 2018+ выходит ~11% на 10 тыс. км: GT 2021 с оценкой 5
+        ушли за 1.285 млн при 5 тыс. км, 910к при 30 тыс. и 600к при 70 тыс.
+        """
+        groups = {}
+        for s in self.sold:
+            if s.get("mileage") and s.get("rank") and (s.get("year") or 0) >= CFG["min_year"]:
+                key = (stats_model(s.get("model")), s["year"], s["rank"])
+                groups.setdefault(key, []).append((s["mileage"] / 1000, math.log(s["price"])))
+        sxy = sxx = 0
+        for pts in groups.values():
+            mx, my = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+            sxy += sum((x - mx) * (y - my) for x, y in pts)
+            sxx += sum((x - mx) ** 2 for x, _ in pts)
+        # мало данных или странный наклон — берём разумные рамки, а не что вышло
+        return min(max(-sxy / sxx, 0.003), 0.02) if sxx else 0.008
 
     def not_sold(self):
         if self.unsold is None:
             self._load()
         return self.unsold
 
+    def _at_mileage(self, sale, km):
+        """Цена проданного лота, пересчитанная на пробег оцениваемого: без этого мотоцикл
+        с 40 тыс. км мерился бы по малопробежным и отсеивался как «уходят за 1.2 млн»."""
+        if not km or not sale.get("mileage"):
+            return sale["price"]
+        factor = math.exp(self.per_km * (sale["mileage"] - km) / 1000)
+        return int(round(sale["price"] * min(max(factor, 0.45), 1.6), -3))
+
     def estimate(self, lot):
         """Медиана финальных цен похожих лотов или None, если похожих меньше трёх.
 
         Сначала та же модель ±1 год и оценка ±1, потом без оценки, потом ±2 года.
+        Цены похожих пересчитаны на пробег этого лота.
         """
         if self.sold is None:
             self._load()
         model, year, rank = stats_model(lot.get("model")), lot.get("year") or 0, lot.get("rank")
+        km = lot.get("mileage")
         for years, by_rank in ((1, True), (1, False), (2, False)):
             if by_rank and not rank:
                 continue
             prices = sorted(
-                s["price"] for s in self.sold
+                self._at_mileage(s, km) for s in self.sold
                 if stats_model(s.get("model")) == model and abs((s.get("year") or 0) - year) <= years
-                and (not by_rank or (s.get("rank") and abs(s["rank"] - rank) <= 1)))
+                and (not by_rank or (s.get("rank") and abs(s["rank"] - rank) <= 1))
+                and s.get("id") != lot.get("id"))
             if len(prices) >= 3:
                 scope = f"{year - years}–{year + years}" + (f", оценка {rank - 1:g}–{rank + 1:g}" if by_rank else "")
+                if km:
+                    scope += f", в пересчёте на {fmt_num(km)} км"
                 return {"median": prices[len(prices) // 2], "n": len(prices),
                         "lo": prices[0], "hi": prices[-1], "scope": scope}
         return None
