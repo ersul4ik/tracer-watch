@@ -662,6 +662,7 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
     projapan = ProJapan()
     known = {same_lot_key(l) for l in lots.values()}
     everywhere = dict(lots)  # и копии с обоих сайтов — чтобы найти лот, о котором уже писали
+    extra = None
     try:
         pj = projapan.lots()
         everywhere.update(pj)
@@ -801,10 +802,16 @@ def run_once(site, tg, state, include_finished=False, verbose=False):
     for_sale = [l for l in lots.values() if l.get("availability") == FOR_SALE]
     if not tg.dry_run:
         maybe_send_digest(state, tg, len(for_sale))
-    # для ответа на «сходи посмотри»: что сейчас в продаже из уже присланного
+    # для ответа на «сходи посмотри»: что сейчас в продаже из уже присланного — со ссылками на все копии
+    def urls(lot):
+        same = same_lot_key(lot)
+        return [l["url"] for l in everywhere.values() if l is lot or (same and same_lot_key(l) == same)]
+
     return {"for_sale": len(for_sale),
+            "projapan_only": None if extra is None else sum(1 for l in extra.values()
+                                                            if l.get("availability") == FOR_SALE),
             "sent_now": [k for k, v in lots_state.items() if v["at"] == int(now)],
-            "open": [l for k, l in lots.items() if l.get("availability") == FOR_SALE and k in lots_state]}
+            "open": [(l, urls(l)) for k, l in lots.items() if l.get("availability") == FOR_SALE and k in lots_state]}
 
 
 def digest_due(state):
@@ -894,13 +901,16 @@ def fmt_when(ts):
 def scan_reply(summary):
     if summary is None:
         return "⚠️ Сходил, но сайт не ответил. Попробую ещё раз через 5 минут."
-    lines = [f"🔎 Сходил: лотов Tracer в продаже — {summary['for_sale']}."]
+    pj = summary["projapan_only"]
+    lines = [f"🔎 Сходил на motoauction и projapan: лотов Tracer в продаже — {summary['for_sale']}"
+             + (" (projapan не ответил, только motoauction)." if pj is None else
+                f", из них только на projapan — {pj}." if pj else ", все есть на motoauction.")]
     lines.append(f"Новых подходящих: <b>{len(summary['sent_now'])}</b> — прислал выше."
                  if summary["sent_now"] else "Новых подходящих нет.")
     if summary["open"]:
         lines.append("\nУже присылал, торги ещё впереди:")
         lines += [f"• {html.escape(l.get('model') or '')} {l.get('year')} · оценка {l.get('rank') or '?'}"
-                  f" · торги {(l.get('auction_date') or '?')[:5]} — {l['url']}" for l in summary["open"]]
+                  f" · торги {(l.get('auction_date') or '?')[:5]} — {' · '.join(urls)}" for l, urls in summary["open"]]
     return "\n".join(lines)
 
 
