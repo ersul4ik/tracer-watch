@@ -12,3 +12,6 @@ watch.log
 # web
 web/node_modules/
 web/dist/
+
+# local preview data for the web page
+web/public/board.dev.json

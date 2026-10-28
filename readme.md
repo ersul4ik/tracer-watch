@@ -1,52 +1,90 @@
 # Tracer watch
 
-Checks Japanese motorcycle auction listings every 3 hours, or right away when asked in Telegram, and sends new Yamaha Tracer lots that match the criteria:
+Watches Japanese motorcycle auctions for Yamaha Tracer lots worth buying. When one shows up it sends a Telegram alert, and it keeps a web page with everything it sees: https://ersul4ik.github.io/tracer-watch/
 
-- model: any model group with `TRACER` in its name (`MT-09 TRACER`, `MT-09 TRACER GT`, `TRACER 9 GT+`, which also covers `TRACER 9GT`);
-- year 2018 or newer;
-- auction grade 4 or higher;
-- the limit is the final hammer price: ¥700,000, or ¥730,000 for grade 6 and up;
-- the starting price is only a floor for the final one, so a start over the limit rules the lot out. A start up to 10% over still gets through, flagged as a near miss: it cannot be had within the limit, but might be worth raising it for;
-- the expected final price is no higher than 1.3 × the limit. The bot works it out itself from the same site's archive of past sales: the median of the same model within ±1 year and ±1 grade over the last year, widening the match when fewer than three sales qualify. Each comparable price is first scaled to the mileage of the lot being judged, using how much prices drop per 1,000 km within the archive itself (about 11% per 10,000 km for 2018+ bikes). Without that, a GT with 40,000 km was judged against low-mileage ones and dismissed as "usually goes for ¥1.2M"; in a backtest the scaling brings the median error down from 6% to 5% and catches a 2021 GT sold for ¥600k that the plain median had ruled out. The site's own "average price" runs high (about ¥1.07M for a 2019 GT against a median sale of ¥838k), so it is used only when the archive has nothing comparable.
+- **Bot:** Python, standard library only. It runs on GitHub Actions every 5 minutes, checks the sites every 3 hours or right away when asked in Telegram.
+- **Database:** SQLite on the `state` branch. It holds what was sent, every lot seen, and your notes.
+- **Web page:** React + Tailwind + shadcn/ui on GitHub Pages, phone-first. It reads the data the bot exports after every pass.
 
-A lot that has not been inspected yet shows grade 0. The bot waits for the grade, and sends the lot as is if the auction is a day away and there is still none. Once the grade of such a lot comes out, the bot replies to its alert with the inspection sheet and whether the lot still qualifies.
+## What gets sent
 
-Lots that end unsold although the last bid was within the limit get their own alert, since a buyer at that price existed and only the seller said no. Such lots are often worth haggling over through the dealer for a day or two after the auction, and they tend to come back: 207900 went unsold at a ¥628k bid and sold for ¥590k a week later. So:
+A lot qualifies when:
 
-- a Tracer that meets the criteria and went unsold in the last two days with a bid within the limit is sent even if the price forecast had filtered it out before the auction, with a hint to negotiate. If the bot already alerted about it, the outcome reply says the same;
-- for two months after that the bike is watched by frame number, the one thing that stays when it is relisted under a new lot number. When it is back on either site, the bot sends it as a reply to the earlier alert, with the previous bid, skipping the price forecast.
+- **Model:** any model group with `TRACER` in its name (`MT-09 TRACER`, `MT-09 TRACER GT`, `TRACER 9 GT+`, which also covers `TRACER 9GT`).
+- **Year:** 2018 or newer.
+- **Grade:** auction grade 4 or higher.
+- **Final price:** the limit is the final hammer price, ¥700,000 or ¥730,000 for grade 6 and up by default. On the server it is currently ¥750,000 and ¥775,000, set through repository variables.
+- **Start price:** the starting price is only a floor for the final one, so a start over the limit rules the lot out. A start up to 10% over still gets through, flagged as a near miss.
+- **Expected price:** no higher than 1.3 × the limit. The bot works it out from the site's archive of past sales: the median of the same model within ±1 year and ±1 grade over the last year, widening the match when fewer than three sales qualify.
+  - Each comparable price is first scaled to the mileage of the lot being judged. The rate comes from the archive itself: about 11% per 10,000 km for 2018+ bikes.
+  - Without the scaling, a GT with 40,000 km was judged against low-mileage ones and dismissed as "usually goes for ¥1.2M". In a backtest the scaling brought the median error down from 6% to 5%.
+  - The site's own "average price" runs high, so it is used only when the archive has nothing comparable.
 
-Unsold lots come from the motoauction archive only: projapan drops them from its listings.
+**Lots without a grade.** A lot that has not been inspected yet shows grade 0. The bot waits for the grade, and sends the lot as is if the auction is a day away and there is still none. Once the grade comes out, the bot replies to its alert with the inspection sheet and whether the lot still qualifies.
 
-Inspection notes in alerts come from both sources (projapan translates BDS sheets; for JBA it only has section grades). Serious notes — noises, leaks, failed seals, parts that need replacing — go first, marked with ❗, ahead of scratches and light rust.
+**Unsold within the limit.** Lots that end unsold although the last bid was within the limit get their own alert: a buyer at that price existed, only the seller said no.
+- Such lots are worth haggling over through the dealer for a day or two after the auction.
+- They tend to come back: 207900 went unsold at a ¥628k bid and sold for ¥590k a week later.
+- For two months the bike is watched by frame number, the one thing that stays when it is relisted under a new lot number. When it is back, the bot replies to the earlier alert with the previous bid.
+- Unsold lots come from the motoauction archive only, since projapan drops them from its listings.
 
-Each alert carries a photo, year, grade, mileage, auction date, starting price, what similar lots usually sell for (median, number of sales and range), the site's landed-cost estimate, the auction comment, the inspector's notes per section, and an "open lot" button. Once the auction is over, the bot replies to its own alert with the outcome: sold and for how much, or not sold. If the site stays unreachable for more than 30 minutes, the bot sends a warning, and another message once it is back.
+**What an alert contains:**
+- a photo, year, grade, mileage, auction date and starting price;
+- what similar lots usually sell for;
+- the auction comment and the inspector's notes. Serious ones (noises, leaks, failed seals, parts that need replacing) go first, marked with ❗;
+- your notes on the bike, if any;
+- an "open lot" button.
 
-Once a day, at 10:00 Bishkek time, a digest arrives: how many Tracer lots are on sale, how many alerts went out, and which new lots were skipped and why. There is deliberately no "nothing found" message after every pass: at one pass per 5 minutes that would be 288 messages a day, and real finds would drown in them. The digest doubles as a heartbeat instead: if it does not arrive, something is broken.
+After the auction the bot replies with the outcome. If a site stays unreachable for more than 30 minutes, it sends a warning.
 
-The bot writes to Telegram in Russian. No dependencies, Python 3.9+ only.
+**Daily digest.** Every day at 10:00 Bishkek time: how many Tracer lots are on sale, how many alerts went out, and which new lots were skipped and why. It doubles as a heartbeat: if it does not arrive, something is broken.
+
+The bot writes to Telegram in Russian; the code is English.
+
+## Notes
+
+You can mark a bike, for example "seen", "too pricey", "needs repair", "mileage", "interesting", plus a comment. Marks attach to the frame number, so they survive a relist and a copy on the other site. They show on the web page, and in Telegram on the next alert about the same bike.
+
+Two ways to leave one:
+
+- **On the web page:** the note button on any lot. The page sends the note to the bot as a run of the `watch` workflow, so it needs a GitHub token with **Actions: Read and write** on this repository only (see the settings dialog on the page). The token stays in that browser. The note shows up within about a minute.
+- **In Telegram:** reply with text to the bot's message about a lot.
+
+## Web page
+
+https://ersul4ik.github.io/tracer-watch/ has five tabs (labels are in Russian):
+
+- **Matching:** matching lots on sale as cards: photo, prices, estimate, limit, flags, the inspection sheet and notes;
+- **On sale:** every Tracer on sale with the reason it was skipped;
+- **Unsold:** bikes left unsold within the limit, and whether they are back;
+- **Sent:** everything the bot sent, with auction outcomes;
+- **Archive:** past sales with filters and a price-vs-mileage chart.
+
+The header shows when the bot last checked, and turns red when it is overdue. The page reads `board.json` from the `state` branch, so it is as fresh as the bot's last pass. It is public, like the repository, but hidden from search engines.
 
 ## Sources
 
 | Site | Auctions | How | Why |
 |---|---|---|---|
-| [motoauction.online](https://motoauction.online) | BDS, JBA, some AUCNET | JSON API behind a token from `/api/init` | main source: grades, inspector notes and the sales archive the price estimate is built from |
-| [projapan.ru](https://projapan.ru) | BDS, JBA (ARAI and AUCNET too, but see below) | open JSON API, `/api/lot/get-list`, searched by frame prefix | catches BDS and JBA lots that never reach motoauction: on 27.10 there were five, among them a 2020 GT starting at ¥550k |
+| [motoauction.online](https://motoauction.online) | BDS, JBA, some AUCNET | JSON API behind a token from `/api/init` | main source: grades, inspector notes and the sales archive |
+| [projapan.ru](https://projapan.ru) | BDS, JBA | open JSON API, searched by frame prefix | catches BDS and JBA lots that never reach motoauction |
 
 The same lot on both sites is matched by auction, date and lot number, and only alerted once. projapan is searched by frame prefix (`FRAMES`, default `RN51J,RN70J,RN99J,RNA1J`) because its model names are raw auction listings. If projapan is down, the pass carries on with motoauction alone.
 
 Looked at and left out:
-- **motovulkan.com** (BDS, JBA, AUCNET): works, but has no API — parsing its Next.js pages breaks with any redesign, and it found nothing projapan did not.
-- **motorom.ru** (adds ARAI and upcoming AUCNET): its robots.txt disallows the search pages. ARAI is small and mostly scooters, and ARAI lots on projapan carry no frame number.
-- **bike-place.ru**: BDS and JBA only, nothing new.
+- **motovulkan.com:** no API, and it found nothing projapan did not.
+- **motorom.ru:** its robots.txt disallows the search pages.
+- **bike-place.ru:** BDS and JBA only, nothing new.
+- **Yahoo Auctions Japan:** only a handful of Tracers a month, priced like the auctions, with no inspection sheet and the logistics on the buyer.
 
 ## Commands
 
 Messages to the bot from the configured chat (anyone else is ignored):
 
-- `/check`, or a plain-language request to go and look (in Russian) — check the sites now and reply with what is on sale and which already-sent lots are still ahead;
-- `/status` — when the last check was and when the next one is due;
-- anything else — a short help.
+- `/check`, or a plain-language request to go and look (in Russian): check the sites now;
+- `/status`: when the last check was and when the next one is due;
+- a text reply to a lot alert: store it as a note on that bike;
+- anything else: a short help.
 
 Replies come within about 5 minutes, which is how often the bot wakes up.
 
@@ -55,18 +93,36 @@ Replies come within about 5 minutes, which is how often the bot wakes up.
 ```
 cron-job.org, every 5 min
    ↓  POST api.github.com/.../actions/workflows/watch.yml/dispatches
-GitHub Actions: tracer_watch.py (a few seconds)
+GitHub Actions: python -m bot (a few seconds)
    ↓  any messages to the bot? (Telegram getUpdates)
-   ↓  site visited only if asked, 3 hours have passed, or the morning digest is due
+   ↓  sites visited only if asked, 3 hours have passed, or the morning digest is due
    ↓  new matching lots and replies → Telegram
-   ↓  what has been sent → the state branch (committed only when something changed)
+   ↓  tracer.db + board.json → the state branch (one fresh commit, only when something changed)
+GitHub Pages: the web page reads board.json from the state branch
 ```
 
-There is no server of its own, so nothing can fall asleep. The keep-alive ping is the workflow dispatch itself. Waking up every 5 minutes is only there so that commands get answered: most runs ask Telegram for new messages and stop, and the auction site sees one visit every 3 hours (`SCAN_EVERY_MIN`). Lots show up at least a day before the auction, so that is plenty. The workflow also has a schedule of its own, every 30 minutes, but only as a fallback: GitHub runs scheduled workflows late and disables them after 60 days without commits.
+There is no server of its own, so nothing can fall asleep.
+- **Keep-alive:** the workflow dispatch itself is the ping. Most runs only ask Telegram for new messages.
+- **Fallback:** the workflow also has a schedule of its own, every 30 minutes, because GitHub runs schedules late and disables them after 60 days without commits.
+- **Why the repository is public:** Actions minutes are unlimited for public repositories. The bot token and chat id live in the repository secrets.
 
-Why not an always-on web service on Render's free tier: the 750 free hours a month are per account, and one service awake around the clock already takes 744 of them. A second one would run the quota out by mid-month, and Render would suspend both.
+## Project layout
 
-The repository is public because Actions minutes are unlimited for public repositories. One pass every 5 minutes is about 8,600 runs a month, while a private repository gets 2,000 minutes. There are no secrets in the code: the bot token and chat id live in the repository secrets.
+```
+bot/
+  main.py          command line (python -m bot)
+  config.py        settings from the environment
+  sources/         motoauction.py, projapan.py
+  pricing.py       limits, the mileage-adjusted estimate, lot keys
+  messages.py      Telegram texts
+  telegram.py      sending, commands, notes as replies
+  scan.py          one pass: send, follow up, outcomes, unsold, relists, digest
+  db.py            SQLite: sent, lots, notes, kv
+  export.py        board.json for the web page
+tests/             unit tests with fake sites (python -m unittest)
+web/               the web page (see web/README.md)
+.github/workflows/ watch (the bot), test, pages
+```
 
 ## Setup
 
@@ -77,9 +133,9 @@ The repository is public because Actions minutes are unlimited for public reposi
 3. Locally:
 
    ```sh
-   cp .env.example .env               # fill in TG_BOT_TOKEN
-   python3 tracer_watch.py --whoami   # prints TG_CHAT_ID; put it into .env
-   python3 tracer_watch.py --test     # a test message should arrive
+   cp .env.example .env         # fill in TG_BOT_TOKEN
+   python -m bot --whoami       # prints TG_CHAT_ID; put it into .env
+   python -m bot --test         # a test message should arrive
    ```
 
 ### 2. GitHub secrets
@@ -88,39 +144,40 @@ The repository is public because Actions minutes are unlimited for public reposi
 gh secret set -f .env -R ersul4ik/tracer-watch
 ```
 
-This uploads every line of `.env` as a repository secret. The workflow reads only `TG_BOT_TOKEN` and `TG_CHAT_ID`; the rest has no effect. To check: Actions → **watch** → **Run workflow**, and a green run should show up within ~20 seconds.
+The workflow reads only `TG_BOT_TOKEN` and `TG_CHAT_ID`.
 
 ### 3. Keep-alive ping on cron-job.org
 
-1. GitHub → Settings → Developer settings → [Fine-grained tokens](https://github.com/settings/personal-access-tokens/new):
-   - Repository access: **Only select repositories** → `tracer-watch`;
-   - Permissions → Repositories → **Actions: Read and write**;
-   - Expiration: the longest available. Once the token expires, the ping starts getting `401` and the token has to be reissued.
+1. GitHub → Settings → Developer settings → [Fine-grained tokens](https://github.com/settings/personal-access-tokens/new): only the `tracer-watch` repository, **Actions: Read and write**, the longest expiration.
 2. [cron-job.org](https://cron-job.org) → **Create cronjob**:
-   - Title: `tracer-watch`;
    - URL: `https://api.github.com/repos/ersul4ik/tracer-watch/actions/workflows/watch.yml/dispatches`;
-   - Schedule: **Every 5 minutes**;
-   - **Advanced** tab:
-     - Request method: `POST`;
-     - Headers:
-       - `Authorization: Bearer <token from step 1>`
-       - `Accept: application/vnd.github+json`
-       - `Content-Type: application/json`
-     - Request body: `{"ref":"main"}`
-3. Save → **Test run**. The response should be `204`, and a new run appears under Actions.
+   - schedule: every 5 minutes;
+   - method `POST`;
+   - headers `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`, `Content-Type: application/json`;
+   - body `{"ref":"main"}`.
+3. **Test run** should answer `204`.
+
+### 4. Web page
+
+GitHub Pages is set to deploy from GitHub Actions; the `pages` workflow publishes `web/` on every push that touches it. For notes from the page, create one more token like the one in step 3 (or reuse it) and paste it in the page's settings.
 
 ## Useful commands
 
 ```sh
-python3 tracer_watch.py --dry-run          # what would be sent right now (sends nothing)
-python3 tracer_watch.py --dry-run --all    # the same over every lot, including those sold today
-gh workflow run watch.yml -f dry_run=true  # the same on the server; the output is in the run log
-gh workflow run watch.yml -f scan=true     # a real check right now, without waiting for the 3 hours
-gh run list -w watch.yml -L 5              # latest runs
+python -m bot --dry-run                     # what would be sent right now (sends and stores nothing)
+python -m bot --dry-run --all               # the same over every lot, including those sold today
+python -m bot --dry-run --board board.json  # and write the web page data locally
+python -m unittest discover -s tests -t .   # tests
+gh workflow run watch.yml -f scan=true      # a real check on the server right now
+gh workflow run watch.yml -f note_key=RN51J003241 -f note_tag=price   # a note from the command line
+gh run list -w watch.yml -L 5               # latest runs
 ```
 
-Run logs: [github.com/ersul4ik/tracer-watch/actions](https://github.com/ersul4ik/tracer-watch/actions).
+The criteria defaults live in `bot/config.py`. On the server they can be overridden in Settings → Secrets and variables → Actions → **Variables**:
+- price: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `TOP_RANK`, `NEAR_RATIO`, `EXPECT_RATIO`;
+- lots: `MIN_YEAR`, `MIN_RANK`, `MODEL_PATTERN`, `FRAMES`;
+- schedule: `SCAN_EVERY_MIN`, plus `DIGEST_HOUR` (`-1` turns it off) and `TZ_OFFSET_HOURS`.
 
-The default criteria live in the code. On the server they can be overridden in Settings → Secrets and variables → Actions → **Variables**: `LIMIT_JPY`, `TOP_LIMIT_JPY`, `MIN_YEAR`, `MIN_RANK`, `TOP_RANK`, `NEAR_RATIO`, `EXPECT_RATIO`, `MODEL_PATTERN`, how often to check the site `SCAN_EVERY_MIN`, plus the digest hour `DIGEST_HOUR` (`-1` turns it off) and the time zone `TZ_OFFSET_HOURS`. For example, `gh variable set LIMIT_JPY -b 750000`.
+For example, `gh variable set LIMIT_JPY -b 750000`.
 
-What has already been sent is kept in `state.json` on the `state` branch. Deleting a lot from it makes the bot send that lot again if it is still on sale.
+The database is `tracer.db` on the `state` branch. To inspect it, fetch that branch and open the file with `sqlite3`. Deleting a row from `sent` makes the bot send that lot again if it is still on sale.
