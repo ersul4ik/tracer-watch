@@ -1,23 +1,40 @@
 name: watch
 
 on:
-  # Основной запуск: cron-job.org дёргает этот workflow через GitHub API каждые 5 минут.
+  # Main trigger: cron-job.org dispatches this workflow through the GitHub API every 5 minutes.
+  # The web page dispatches it too, to store a note.
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Ничего не слать, показать в логе, что пришло бы (по всем лотам, включая проданные)"
+        description: "Send nothing, print what would be sent (all lots, sold ones included)"
         type: boolean
         default: false
       scan:
-        description: "Сходить на сайты сейчас, не дожидаясь SCAN_EVERY_MIN"
+        description: "Check the sites now instead of waiting for SCAN_EVERY_MIN"
         type: boolean
         default: false
-  # Подстраховка на случай, если cron-job.org отвалится. Расписание GitHub часто опаздывает
-  # и отключается после 60 дней без коммитов в репо, поэтому основным его делать нельзя.
+      note_key:
+        description: "Store a note on this bike (frame number or lot key) instead of a pass"
+        type: string
+        default: ""
+      note_tag:
+        description: "Note tag: seen, price, repair, mileage, like, or delete"
+        type: string
+        default: ""
+      note_text:
+        description: "Note text (the note id for delete)"
+        type: string
+        default: ""
+      note_lot:
+        description: "Key of the lot the note was left on"
+        type: string
+        default: ""
+  # Fallback in case cron-job.org goes quiet. GitHub runs schedules late and disables them
+  # after 60 days without commits, so this cannot be the main trigger.
   schedule:
     - cron: "7,37 * * * *"
 
-# Два прохода сразу не нужны: оба прочитали бы один state и прислали одни и те же лоты
+# Two runs at once would read the same state and send the same lots
 concurrency:
   group: watch
   cancel-in-progress: false
@@ -32,18 +49,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Что уже отправлено, хранится в отдельной ветке state, чтобы не засорять main
+      # The database and the web page data live on a separate state branch, away from main
       - uses: actions/checkout@v5
         with:
           ref: state
           path: .state
 
-      - name: Проход
+      - name: Run
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          DB_FILE: .state/tracer.db
           STATE_FILE: .state/state.json
-          # Критерии можно поменять в Settings → Secrets and variables → Actions → Variables
+          # Criteria can be changed in Settings → Secrets and variables → Actions → Variables
           MIN_YEAR: ${{ vars.MIN_YEAR }}
           MIN_RANK: ${{ vars.MIN_RANK }}
           LIMIT_JPY: ${{ vars.LIMIT_JPY }}
@@ -56,21 +74,35 @@ jobs:
           FRAMES: ${{ vars.FRAMES }}
           DIGEST_HOUR: ${{ vars.DIGEST_HOUR }}
           TZ_OFFSET_HOURS: ${{ vars.TZ_OFFSET_HOURS }}
+          # Inputs go through the environment, never straight into the script
+          DRY_RUN: ${{ inputs.dry_run }}
+          SCAN: ${{ inputs.scan }}
+          NOTE_KEY: ${{ inputs.note_key }}
+          NOTE_TAG: ${{ inputs.note_tag }}
+          NOTE_TEXT: ${{ inputs.note_text }}
+          NOTE_LOT: ${{ inputs.note_lot }}
         run: |
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            python3 tracer_watch.py --dry-run --all
-          elif [ "${{ inputs.scan }}" = "true" ]; then
-            python3 tracer_watch.py --scan
+          if [ -n "$NOTE_KEY" ]; then
+            python3 -m bot --note "$NOTE_KEY" --tag "$NOTE_TAG" --text "$NOTE_TEXT" --lot "$NOTE_LOT"
+          elif [ "$DRY_RUN" = "true" ]; then
+            python3 -m bot --dry-run --all
+          elif [ "$SCAN" = "true" ]; then
+            python3 -m bot --scan
           else
-            python3 tracer_watch.py
+            python3 -m bot
           fi
 
-      - name: Сохранить state
+      # The branch is pushed as a single fresh commit, so old copies of the database
+      # do not pile up in git history
+      - name: Save state
         if: always()
         working-directory: .state
         run: |
+          # once the database exists, the old JSON state is history
+          if [ -f tracer.db ] && [ -f state.json ]; then git rm -q state.json; fi
           git add -A
           git diff --cached --quiet && exit 0
+          git checkout -q --orphan fresh
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "Update state"
-          git push -q origin HEAD:state
+          git push -q -f origin HEAD:state

@@ -1,0 +1,21 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+    paths: ["bot/**", "tests/**", ".github/workflows/test.yml"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        env:
+          TG_CHAT_ID: "1"
+        run: python -m unittest discover -s tests -t . -v

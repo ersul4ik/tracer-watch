@@ -1,6 +1,14 @@
 .env
-state.json
-state.tmp
-watch.log
+.claude/
 __pycache__/
 .DS_Store
+# local runs
+state.json
+tracer.db
+tracer.db-journal
+board.json
+*.tmp
+watch.log
+# web
+web/node_modules/
+web/dist/
