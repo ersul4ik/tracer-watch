@@ -2,7 +2,7 @@
 
 Watches Japanese motorcycle auctions for Yamaha Tracer lots worth buying. When one shows up it sends a Telegram alert, and it keeps a web page with everything it sees: https://ersul4ik.github.io/tracer-watch/
 
-- **Bot:** Python, standard library only. It runs on GitHub Actions every 5 minutes, checks the sites every 3 hours or right away when asked in Telegram.
+- **Bot:** Python, standard library only. It runs on GitHub Actions every 5 minutes and checks the sites every `SCAN_EVERY_MIN` minutes (3 hours by default, 30 minutes on the server, since good lots can be listed the day before the auction), or right away when asked in Telegram.
 - **Database:** SQLite on the `state` branch. It holds what was sent, every lot seen, and your notes.
 - **Web page:** React + Tailwind + shadcn/ui on GitHub Pages, phone-first. It reads the data the bot exports after every pass.
 
@@ -15,7 +15,7 @@ A lot qualifies when:
 - **Grade:** auction grade 4 or higher.
 - **Final price:** the limit is the final hammer price, ¥700,000 or ¥730,000 for grade 6 and up by default. On the server it is currently ¥750,000 and ¥775,000, set through repository variables.
 - **Start price:** the starting price is only a floor for the final one, so a start over the limit rules the lot out. A start up to 10% over still gets through, flagged as a near miss.
-- **Expected price:** no higher than 1.3 × the limit. The bot works it out from the site's archive of past sales: the median of the same model within ±1 year and ±1 grade over the last year, widening the match when fewer than three sales qualify.
+- **Expected price:** no higher than 1.3 × the limit by default (`EXPECT_RATIO`; 1.6 on the server, so that well-kept bikes that might go cheap still come through). The bot works it out from the site's archive of past sales: the median of the same model within ±1 year and ±1 grade over the last year, widening the match when fewer than three sales qualify.
   - Each comparable price is first scaled to the mileage of the lot being judged. The rate comes from the archive itself: about 11% per 10,000 km for 2018+ bikes.
   - Without the scaling, a GT with 40,000 km was judged against low-mileage ones and dismissed as "usually goes for ¥1.2M". In a backtest the scaling brought the median error down from 6% to 5%.
   - The site's own "average price" runs high, so it is used only when the archive has nothing comparable.
@@ -95,7 +95,7 @@ cron-job.org, every 5 min
    ↓  POST api.github.com/.../actions/workflows/watch.yml/dispatches
 GitHub Actions: python -m bot (a few seconds)
    ↓  any messages to the bot? (Telegram getUpdates)
-   ↓  sites visited only if asked, 3 hours have passed, or the morning digest is due
+   ↓  sites visited only if asked, SCAN_EVERY_MIN has passed, or the morning digest is due
    ↓  new matching lots and replies → Telegram
    ↓  tracer.db + board.json → the state branch (one fresh commit, only when something changed)
 GitHub Pages: the web page reads board.json from the state branch
