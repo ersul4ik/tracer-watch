@@ -134,6 +134,9 @@ def main():
         except (OSError, ValueError) as e:  # network, HTTP errors, broken JSON
             # last_scan stays put, so the next run in 5 minutes tries again
             note_site_down(state, tg, e)
+        except Exception as e:  # a bug: still warn in Telegram (once), and fail the run so it shows red
+            note_site_down(state, tg, e)
+            raise
         finally:
             notes = [c for c in commands if c["cmd"] == "note"]
             answers = [(note_from_reply(store, c), c["reply_to"]) for c in notes]

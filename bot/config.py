@@ -66,6 +66,11 @@ CFG = {
     # How often to visit the sites. Runs in between (the ping every 5 minutes) only check
     # whether the user asked the bot to look right now
     "scan_every_min": env_int("SCAN_EVERY_MIN", 180),
+    # What a bike costs landed, for the dollar line in alerts: the hammer price in dollars plus the
+    # agent's percentage, plus fixed costs (customs 1800 + shipping 1200 + service 500)
+    "jpy_per_usd": env_float("JPY_PER_USD", 155),
+    "fee_ratio": env_float("FEE_RATIO", 0.10),
+    "fixed_usd": env_int("FIXED_USD", 3500),
     # Daily digest: the local hour to send it at (-1 turns it off) and the UTC offset
     "digest_hour": env_int("DIGEST_HOUR", 10),
     "tz": timezone(timedelta(hours=env_float("TZ_OFFSET_HOURS", 6))),

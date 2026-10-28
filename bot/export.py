@@ -11,8 +11,8 @@ from pathlib import Path
 
 from .config import CFG, FOR_SALE, NOT_SOLD, SOLD
 from .messages import inspection_lines
-from .pricing import (auction_day, bike_id, days_to_auction, expected_price, frame_key, limit_for,
-                      same_lot_key, stats_model)
+from .pricing import (auction_day, bike_id, days_to_auction, expected_price, frame_key, landed_usd, limit_for,
+                      same_lot_key, stats_model, suggested_bid)
 
 VERSION = 1
 
@@ -57,6 +57,7 @@ def board_lot(lot, detail, reason, prev, stats, urls, sent):
         "photo": lot.get("pathImg") or next(iter(detail.get("photos") or []), None),
         "links": [{"site": site_of(u), "url": u} for u in urls],
         "reason": reason, "sent": sent, "limit": limit,
+        "bid": suggested_bid(limit, est), "bid_usd": landed_usd(suggested_bid(limit, est)), "limit_usd": landed_usd(limit),
         "estimate": est, "site_avg": detail.get("average_price_jpy") or lot.get("AveragePrice") or None,
         "relist_of": None if prev is None else {"key": str(prev["id"]), "date": prev.get("auction_date"),
                                                  "auction": prev.get("auction"), "bid": prev.get("price")},

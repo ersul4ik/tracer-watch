@@ -4,12 +4,12 @@ import html
 import time
 from datetime import datetime
 
-from .config import CFG, FOR_SALE, NOT_SOLD, SOLD, log
+from .config import CFG, FOR_SALE, NOT_SOLD, SOLD, fmt_jpy, log
 from .export import board_archive, board_history, board_lot, board_unsold, lot_row
 from .messages import (grade_message, lot_message, lot_title, relist_intro, result_message,
                        unsold_intro)
 from .pricing import (Stats, auction_day, basic_reason, bike_id, check, days_to_auction, frame_key,
-                      same_lot_key, unsold_bid)
+                      limit_for, same_lot_key, unsold_bid)
 from .sources.motoauction import SITE
 from .sources.projapan import ProJapan
 
@@ -71,14 +71,23 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
     # Bikes left unsold in the past two months with a bid within the limit: frame -> latest such lot.
     # projapan does not show unsold lots (they just drop out of its listings), so motoauction only
     watched = {}
+    # Any unsold bike that otherwise qualifies, whatever the bid: a seller who refused 800k may
+    # relist it starting at 650k. A relist is judged by its start, not by the price forecast
+    relist_watch = {}
     for lot in sorted(stats.not_sold(), key=auction_day):
-        if unsold_bid(lot) and frame_key(lot) and days_to_auction(lot) >= -60:
+        if not frame_key(lot) or days_to_auction(lot) < -60 or basic_reason(lot):
+            continue
+        relist_watch[frame_key(lot)] = lot
+        if unsold_bid(lot):
             watched[frame_key(lot)] = lot
 
     def verdict(lot):
         """The reason to skip (None if it qualifies) and the earlier unsold lot if this is a relist."""
-        prev = watched.get(frame_key(lot))
+        prev = relist_watch.get(frame_key(lot))
         if prev and lot.get("availability") == FOR_SALE and (auction_day(lot) or auction_day(prev)) > auction_day(prev):
+            start = lot.get("price") or 0
+            if start > limit_for(lot.get("rank")) * CFG["near_ratio"]:
+                return f"старт {fmt_jpy(start)} выше лимита (перевыставлен)", prev
             return basic_reason(lot), prev
         return check(lot, stats), None
 
@@ -270,8 +279,26 @@ def maybe_send_digest(store, tg, for_sale):
             lines.append(f"… и ещё {len(new) - 30}")
     else:
         lines.append("Других новых лотов не было." if sent else "Новых лотов за сутки не появилось.")
+    soon = auctions_soon(state)
+    if soon:
+        lines.append("\n⏰ <b>Торги по лотам, которые я присылал:</b>")
+        lines += soon
     tg.send("\n".join(lines))
     state["digest_day"], state["digest_at"] = today, int(time.time())
+
+
+def auctions_soon(state):
+    """Sent lots whose auction is today or tomorrow and still ahead: a nudge to pass the bid on."""
+    today = datetime.now(CFG["tz"]).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    seen, out = set(), []
+    for key, e in sorted(state["lots"].items(), key=lambda kv: kv[1].get("date_ts") or 0):
+        ts = e.get("date_ts") or 0
+        if e.get("done") or not today <= ts < today + 2 * 86400 or (e.get("same") and e["same"] in seen):
+            continue
+        seen.add(e.get("same"))
+        when = "сегодня" if ts < today + 86400 else "завтра"
+        out.append(f"• {when}: {html.escape(e.get('title') or key)} — {e.get('url') or key}")
+    return out
 
 
 def note_site_ok(state, tg):
@@ -281,16 +308,24 @@ def note_site_ok(state, tg):
 
 
 def note_site_down(state, tg, err):
-    """One failure is no reason to bother the user; silence longer than ALERT_AFTER_MIN is."""
-    log("site did not answer:", repr(err))
+    """One failure is no reason to bother the user; failing longer than ALERT_AFTER_MIN is.
+
+    Network errors mean a site is down; anything else is a bug in the bot, said as such.
+    """
+    network = isinstance(err, (OSError, ValueError))
+    log("site did not answer:" if network else "pass failed:", repr(err))
     now = int(time.time())
     if not state["fail_since"]:
         state["fail_since"] = now
     down_min = (now - state["fail_since"]) // 60
     if not state["alerted"] and down_min >= CFG["alert_after_min"]:
-        tg.send(f"⚠️ motoauction.online не отвечает уже {down_min} мин — лоты сейчас не вижу.\n"
-                f"<code>{html.escape(repr(err))[:300]}</code>")
-        state["alerted"] = True
+        what = "сайты не отвечают" if network else "бот падает с ошибкой"
+        try:
+            tg.send(f"⚠️ Уже {down_min} мин {what} — лоты сейчас не вижу.\n"
+                    f"<code>{html.escape(repr(err))[:300]}</code>")
+            state["alerted"] = True
+        except (RuntimeError, OSError) as e:
+            log("could not send the alert:", e)
 
 
 def scan_due(state):

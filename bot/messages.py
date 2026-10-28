@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 
 from .config import CFG, SOLD, fmt_jpy, fmt_num
-from .pricing import check, expected_price, limit_for
+from .pricing import check, expected_price, landed_usd, limit_for, suggested_bid
 
 
 def report_lines(detail):
@@ -21,8 +21,15 @@ def report_lines(detail):
 
 # Notes that make a lot worth a careful look: noises, leaks, "needs replacing".
 # "Сильно" (heavy) is serious only when it is not about scratches
-SERIOUS_RE = re.compile(r"требует замен|failure|неисправ|не работ|шум|течь|утечк|трещин"
+SERIOUS_RE = re.compile(r"требует(ся)? замен|под замену|failure|неисправ|не работ|шум|течь|утечк|трещин|тресн|отказ"
                         r"|^(?!.*царапин).*сильно", re.I)
+# ...unless the inspector marked it as slight: "Утечка масла, Незначительно" is not a repair
+MINOR_RE = re.compile(r"незначительн|маленьк|малый|малая|слабый|small", re.I)
+
+
+def is_serious(note):
+    """A note line is serious when one of its parts (split by ";") is, and that part is not marked slight."""
+    return any(SERIOUS_RE.search(part) and not MINOR_RE.search(part) for part in re.split(r"[;\n]", note))
 
 
 def inspection_lines(detail):
@@ -35,8 +42,8 @@ def inspection_lines(detail):
     if detail.get("prev_meter"):
         lines.append(f"Пробег на прошлой проверке: {detail['prev_meter']}")
     notes = report_lines(detail) + [f"• {n}" for n in detail.get("notes") or []]
-    lines += ["❗" + n[1:] for n in notes if SERIOUS_RE.search(n)]
-    lines += [n for n in notes if not SERIOUS_RE.search(n)]
+    lines += ["❗" + n[1:] for n in notes if is_serious(n)]
+    lines += [n for n in notes if not is_serious(n)]
     return [html.escape(x) for x in lines]
 
 
@@ -74,6 +81,9 @@ def lot_message(lot, detail, max_len, stats=None, intro=(), notes=()):
         expect_line = f"Средняя с сайта: {fmt_jpy(avg)} (своих продаж для сравнения мало)"
 
     e = html.escape
+    sheet = inspection_lines(detail)
+    serious = sum(1 for x in sheet if x.startswith("❗"))
+    bid = suggested_bid(limit, est)
     head = [*intro,
         f"🏍 <b>{e(lot.get('brand') or '')} {e(lot.get('model') or '')}</b> · {lot.get('year') or 'год ?'}",
         f"Оценка <b>{rank or '?'}</b> · {fmt_num(lot.get('mileage') or 0)} км"
@@ -83,14 +93,19 @@ def lot_message(lot, detail, max_len, stats=None, intro=(), notes=()):
         f"Старт: {fmt_jpy(start) if start else 'пока неизвестен'}",
         expect_line,
         f"Наш лимит (финал): <b>{fmt_jpy(limit)}</b>" + (f" · {e(rub_label)}: {e(rub)}" if rub else ""),
+        (f"💵 Ставь максимум <b>{fmt_jpy(bid)}</b>: выйдет ~{fmt_num(landed_usd(bid))} $ со всеми расходами"
+         + (f" (при лимите ~{fmt_num(landed_usd(limit))} $)" if bid < limit else "")),
     ]
+    if sheet:
+        head.append(f"🔧 В листе осмотра серьёзных замечаний: {serious} — они ниже с ❗" if serious
+                    else "✅ Без серьёзных замечаний в листе осмотра")
     head += flags
     if lot.get("site") == "projapan":
         head.append(f"🔎 нашёл на projapan.ru, на motoauction этого лота нет · рама {e(detail.get('frame_number') or '?')}")
     if notes:
         head.append("📝 Твои метки: " + e("; ".join(note_text(n) for n in notes)))
 
-    return fit(head, inspection_lines(detail), max_len)
+    return fit(head, sheet, max_len)
 
 
 def grade_message(lot, detail, stats):

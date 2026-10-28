@@ -104,9 +104,16 @@ export function LotCard({ lot }: { lot: Lot }) {
               '—'
             )}
           </Row>
-          <Row label="Наш лимит" strong>
+          <Row label="Наш лимит">
             {yen(lot.limit)}
+            {lot.limit_usd ? <span className="block text-xs text-muted-foreground">~{lot.limit_usd.toLocaleString('ru-RU')} $ со всеми расходами</span> : null}
           </Row>
+          {lot.bid ? (
+            <Row label="Ставь максимум" strong>
+              {yen(lot.bid)}
+              {lot.bid_usd ? <span className="block text-xs font-normal text-muted-foreground">~{lot.bid_usd.toLocaleString('ru-RU')} $</span> : null}
+            </Row>
+          ) : null}
         </dl>
         {lot.estimate && <p className="text-xs text-muted-foreground">{lot.estimate.scope}</p>}
 

@@ -36,6 +36,9 @@ export interface Lot {
   reason: string | null
   sent: boolean
   limit: number
+  bid?: number
+  bid_usd?: number
+  limit_usd?: number
   estimate: Estimate | null
   site_avg: number | null
   relist_of: { key: string; date: string; auction: string; bid: number } | null

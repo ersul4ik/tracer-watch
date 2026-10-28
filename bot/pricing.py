@@ -204,3 +204,16 @@ def days_to_auction(lot):
 def bike_id(lot):
     """What notes attach to: the bike, not the lot. The frame survives a relist and a copy on the other site."""
     return frame_key(lot) or same_lot_key(lot) or str(lot.get("id"))
+
+
+def landed_usd(price):
+    """Hammer price in yen to the full cost in dollars: the bike, the agent's fee and fixed costs."""
+    return round(price / CFG["jpy_per_usd"] * (1 + CFG["fee_ratio"]) + CFG["fixed_usd"])
+
+
+def suggested_bid(limit, est):
+    """No point bidding far above what similar lots go for: 5% over the median, rounded up to 10k,
+    but never over the limit."""
+    if not est:
+        return limit
+    return min(limit, -(-int(est["median"] * 1.05) // 10_000) * 10_000)
