@@ -61,9 +61,11 @@ class Site:
             d = self._get("/api/lots", params)
             page = list((d.get("lots") or {}).values())
             out.extend(page)
-            if len(page) < 100:
+            # The site caps a page below the limit asked for (50 since 28.10), so a short page is
+            # not the end: follow has_more, and without it stop only at an empty page
+            if not page or d.get("has_more") is False:
                 return out
-            offset += 100
+            offset += len(page)
 
     def lot(self, lot_id):
         return self._get(f"/api/lot/{lot_id}")
