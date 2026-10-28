@@ -67,6 +67,17 @@ class Import(unittest.TestCase):
         self.assertEqual((kinds["1"], kinds["225792"], kinds["237878"]), ("relist", "unsold", "alert"))
 
 
+class AtomicImport(unittest.TestCase):
+    def test_failed_import_leaves_no_database(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "state.json").write_text("{not json")
+        with self.assertRaises(ValueError):
+            Store.open(d / "tracer.db", legacy=d / "state.json")
+        self.assertFalse((d / "tracer.db").exists())
+        (d / "state.json").write_text(json.dumps(OLD_STATE))
+        self.assertEqual(len(Store.open(d / "tracer.db", legacy=d / "state.json").state["lots"]), 3)
+
+
 class Lots(unittest.TestCase):
     def test_first_seen_stays(self):
         store = Store()
@@ -85,6 +96,21 @@ class Lots(unittest.TestCase):
         store.save()
         self.assertEqual(store.new_skipped_since(0), [])
 
+    def test_finished_skipped_lot_stays_in_digest(self):
+        store = Store()
+        store.record_lot({"key": "1", "model": "M", "availability": 0, "auction_date": "30.10.2026"}, 100,
+                         reason="x", with_reason=True)
+        store.record_lot({"key": "1", "model": "M", "availability": 1, "auction_date": "30.10.2026"}, 200)
+        self.assertEqual(len(store.new_skipped_since(50)), 1)
+
+    def test_unlisted_lots_lose_for_sale(self):
+        store = Store()
+        store.record_lot({"key": "1", "availability": 0}, 100, reason="x", with_reason=True)
+        store.record_lot({"key": "2", "availability": 0}, 200, reason="x", with_reason=True)
+        store.forget_unlisted(200)
+        rows = dict(store.conn.execute("SELECT key, availability FROM lots").fetchall())
+        self.assertEqual(rows, {"1": None, "2": 0})
+
     def test_archive_row_keeps_reason(self):
         store = Store()
         store.record_lot({"key": "1", "availability": 0}, 100, reason="x", with_reason=True)
@@ -102,7 +128,8 @@ class Notes(unittest.TestCase):
         self.assertEqual([n["text"] for n in store.notes_for("RN51J003241")],
                          ["дорого для 42 тыс. км", "посмотреть фото вилки"])
         self.assertEqual(set(store.all_notes()), {"RN51J003241", "OTHER"})
-        store.delete_note(a)
+        self.assertEqual(store.delete_note(a, "OTHER"), 0)  # an id from another bike is left alone
+        store.delete_note(a, "RN51J003241")
         self.assertEqual(len(store.notes_for("RN51J003241")), 1)
         self.assertEqual(store.notes_for(None), [])
 

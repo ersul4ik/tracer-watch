@@ -1,4 +1,4 @@
-import { Suspense, lazy, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -9,7 +9,7 @@ import { LotCard } from '@/components/LotCard'
 import { Settings } from '@/components/Settings'
 import { useBoard } from '@/hooks/useBoard'
 import { AppContext } from '@/lib/context'
-import { isHidden } from '@/lib/notes'
+import { HIDING_LABELS, isHidden } from '@/lib/notes'
 
 // The archive pulls in the charting library: load it only when the tab is opened
 const Archive = lazy(() => import('@/components/Archive').then((m) => ({ default: m.Archive })))
@@ -28,11 +28,23 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab)
   const [settings, setSettings] = useState(false)
   const [hideMarked, setHideMarked] = useState(false)
+  const tabsRef = useRef<HTMLDivElement>(null)
 
-  const matching = useMemo(
-    () => (board?.lots ?? []).filter((l) => !l.reason && (!hideMarked || !isHidden(board, l.bike))),
-    [board, hideMarked],
-  )
+  // A link or the back button changes the hash: follow it
+  useEffect(() => {
+    const onHash = () => setTab(initialTab())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  // On a phone not every tab fits: keep the active one in view
+  useEffect(() => {
+    tabsRef.current?.querySelector('[data-state="active"]')?.scrollIntoView({ block: 'nearest', inline: 'center' })
+  }, [tab, board])
+
+  const allMatching = useMemo(() => (board?.lots ?? []).filter((l) => !l.reason), [board])
+  const matching = allMatching.filter((l) => !hideMarked || !isHidden(board, l.bike))
+  const scanEvery = board ? (board.scan_every_min >= 60 ? `${Math.round(board.scan_every_min / 60)} ч` : `${board.scan_every_min} мин`) : ''
 
   const ctx = { board, pending, sendNote, dropPending, openSettings: () => setSettings(true) }
 
@@ -42,8 +54,10 @@ export default function App() {
         <div className="mx-auto flex max-w-5xl flex-col gap-5 px-[max(16px,env(safe-area-inset-left))] py-6">
           <Header board={board} loading={loading} onRefresh={refresh} onSettings={() => setSettings(true)} />
 
-          {error && !board && (
-            <p className="rounded-lg bg-bad-soft p-4 text-sm text-bad">{error}. Попробуй обновить страницу.</p>
+          {error && (
+            <p className="rounded-lg bg-bad-soft p-4 text-sm text-bad">
+              {board ? `Не удалось обновить данные: ${error}. Показываю последние загруженные.` : `${error}. Попробуй обновить страницу.`}
+            </p>
           )}
 
           {!board && !error && (
@@ -62,9 +76,9 @@ export default function App() {
               }}
               className="gap-4"
             >
-              <div className="-mx-4 overflow-x-auto px-4">
+              <div ref={tabsRef} className="-mx-4 overflow-x-auto px-4">
                 <TabsList>
-                  <TabsTrigger value="match">Подходят · {board.counts.matching}</TabsTrigger>
+                  <TabsTrigger value="match">Подходят · {matching.length}</TabsTrigger>
                   <TabsTrigger value="sale">В продаже · {board.counts.for_sale}</TabsTrigger>
                   <TabsTrigger value="unsold">Не продали · {board.watched.length}</TabsTrigger>
                   <TabsTrigger value="sent">Присылал · {board.history.length}</TabsTrigger>
@@ -75,7 +89,7 @@ export default function App() {
               {(tab === 'match' || tab === 'sale') && (
                 <label className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Switch id="hide-marked" checked={hideMarked} onCheckedChange={setHideMarked} />
-                  скрыть с метками «дорого», «ремонт», «пробег»
+                  скрыть с метками {HIDING_LABELS}
                 </label>
               )}
 
@@ -86,10 +100,14 @@ export default function App() {
                       <LotCard key={l.key} lot={l} />
                     ))}
                   </div>
+                ) : allMatching.length ? (
+                  <Empty>
+                    Все подходящие лоты скрыты: у них метки {HIDING_LABELS}. Выключи фильтр, чтобы их увидеть.
+                  </Empty>
                 ) : (
                   <Empty>
-                    Сейчас подходящих лотов нет. Бот проверяет сайты каждые {Math.round(board.scan_every_min / 60)} ч и
-                    напишет в Telegram, как только появится.
+                    Сейчас подходящих лотов нет. Бот проверяет сайты каждые {scanEvery} и напишет в Telegram, как только
+                    появится.
                   </Empty>
                 )}
               </TabsContent>

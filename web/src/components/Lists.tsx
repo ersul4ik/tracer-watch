@@ -3,8 +3,8 @@ import { NoteButton, NoteChips } from '@/components/Notes'
 import { Photo } from '@/components/LotCard'
 import { useNow } from '@/hooks/useNow'
 import { useApp } from '@/lib/context'
-import { dateTime, daysLeft, daysUntil, grade, km, shortDate, yen, yenShort } from '@/lib/format'
-import { isHidden } from '@/lib/notes'
+import { dateTime, daysLeft, daysUntil, grade, joinParts, km, shortDate, yen, yenShort } from '@/lib/format'
+import { HIDING_LABELS, isHidden } from '@/lib/notes'
 import type { HistoryItem, Lot, Watched } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -26,7 +26,14 @@ function Ext({ href, children }: { href: string | null; children: React.ReactNod
 export function OnSale({ lots, hideMarked }: { lots: Lot[]; hideMarked: boolean }) {
   const { board } = useApp()
   const shown = lots.filter((l) => !hideMarked || !isHidden(board, l.bike))
-  if (!shown.length) return <Empty>Сейчас нет Tracer в продаже{hideMarked && lots.length ? ' без меток «дорого» и «ремонт»' : ''}.</Empty>
+  if (!shown.length)
+    return (
+      <Empty>
+        {lots.length
+          ? `Все лоты в продаже скрыты: у них метки ${HIDING_LABELS}. Выключи фильтр, чтобы их увидеть.`
+          : 'Сейчас нет Tracer в продаже.'}
+      </Empty>
+    )
   return (
     <ul className="flex flex-col divide-y rounded-xl border bg-card">
       {shown.map((l) => (
@@ -45,9 +52,9 @@ export function OnSale({ lots, hideMarked }: { lots: Lot[]; hideMarked: boolean 
               </span>
             </div>
             <p className="tabular text-xs text-muted-foreground">
-              оценка {grade(l.rank)} · {km(l.mileage)} · {l.auction} · {daysLeft(daysUntil(l.date_iso, l.days))} ({shortDate(l.date)})
+              {joinParts(`оценка ${grade(l.rank)}`, km(l.mileage), l.auction, daysLeft(daysUntil(l.date_iso)), l.date && `(${shortDate(l.date)})`)}
             </p>
-            <p className={cn('text-xs', l.reason ? 'text-muted-foreground' : 'font-medium text-ok')}>
+            <p className={cn('text-xs [overflow-wrap:anywhere]', l.reason ? 'text-muted-foreground' : 'font-medium text-ok')}>
               {l.reason ? `не подходит: ${l.reason}` : '✓ подходит'}
               {l.sent && ' · присылал'}
             </p>
@@ -78,11 +85,9 @@ export function WatchedList({ items }: { items: Watched[] }) {
               </Ext>
             </span>
             <p className="tabular text-sm">
-              {shortDate(w.date)} на {w.auction}: ставка дошла до <b>{yen(w.bid)}</b>, продавец не отдал
+              {joinParts(w.date && shortDate(w.date), w.auction)}: ставка дошла до <b>{yen(w.bid)}</b>, продавец не отдал
             </p>
-            <p className="tabular text-xs text-muted-foreground">
-              оценка {grade(w.rank)} · {km(w.mileage)}
-            </p>
+            <p className="tabular text-xs text-muted-foreground">{joinParts(`оценка ${grade(w.rank)}`, km(w.mileage))}</p>
             <p className="text-xs">
               {w.relisted ? (
                 <span className="font-medium text-ok">
@@ -101,7 +106,7 @@ export function WatchedList({ items }: { items: Watched[] }) {
   )
 }
 
-const KIND = { alert: 'подходящий лот', relist: 'перевыставлен', unsold: 'не продан в лимит' }
+const KIND: Record<string, string> = { alert: 'подходящий лот', relist: 'перевыставлен', unsold: 'не продан в лимит' }
 
 /** What the bot has sent to Telegram, with the auction outcome. */
 export function HistoryList({ items }: { items: HistoryItem[] }) {
@@ -123,7 +128,7 @@ export function HistoryList({ items }: { items: HistoryItem[] }) {
                 <Ext href={h.url}>{h.title}</Ext>
               </span>
               <span className="text-xs text-muted-foreground">
-                {KIND[h.kind]} · {dateTime(h.sent_at)}
+                {joinParts(KIND[h.kind] ?? 'лот', h.sent_at ? dateTime(h.sent_at) : null)}
               </span>
             </div>
             <p className="tabular text-sm">{outcome}</p>

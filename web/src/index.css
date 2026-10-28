@@ -45,6 +45,7 @@
     --color-warn-soft: var(--warn-soft);
     --color-bad: var(--bad);
     --color-bad-soft: var(--bad-soft);
+    --color-bad-strong: var(--bad-strong);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -76,12 +77,13 @@
     --border: oklch(0.91 0.012 258);
     --input: oklch(0.89 0.014 258);
     --ring: oklch(0.6 0.15 262);
-    --ok: oklch(0.58 0.14 152);
+    --ok: oklch(0.48 0.12 152);
     --ok-soft: oklch(0.95 0.04 152);
-    --warn: oklch(0.68 0.15 70);
+    --warn: oklch(0.5 0.12 60);
     --warn-soft: oklch(0.96 0.05 85);
-    --bad: oklch(0.58 0.2 27);
+    --bad: oklch(0.53 0.2 27);
     --bad-soft: oklch(0.96 0.03 27);
+    --bad-strong: oklch(0.53 0.2 27);
     --chart-1: oklch(0.55 0.19 262);
     --chart-2: oklch(0.7 0.12 200);
     --chart-3: oklch(0.68 0.15 70);
@@ -123,6 +125,7 @@
     --warn-soft: oklch(0.32 0.05 75);
     --bad: oklch(0.72 0.17 25);
     --bad-soft: oklch(0.32 0.06 25);
+    --bad-strong: oklch(0.52 0.19 27);
     --chart-1: oklch(0.72 0.14 258);
     --chart-2: oklch(0.78 0.1 200);
     --chart-3: oklch(0.8 0.14 80);

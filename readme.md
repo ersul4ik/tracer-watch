@@ -181,3 +181,5 @@ The criteria defaults live in `bot/config.py`. On the server they can be overrid
 For example, `gh variable set LIMIT_JPY -b 750000`.
 
 The database is `tracer.db` on the `state` branch. To inspect it, fetch that branch and open the file with `sqlite3`. Deleting a row from `sent` makes the bot send that lot again if it is still on sale.
+
+Every save keeps the previous version of the `state` branch on `state-prev`. To roll back a bad run: `git push -f origin origin/state-prev:state`.

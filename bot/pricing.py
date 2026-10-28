@@ -182,6 +182,8 @@ def unsold_bid(lot):
 def frame_key(lot):
     """The frame is the one thing that stays when a bike is relisted under a new lot number."""
     frame = lot.get("frame") or (lot.get("detail") or {}).get("frame_number") or ""
+    if "*" in frame:  # masked by the site (RNA1J-000***): would lump different bikes together
+        return None
     return re.sub(r"[^A-Z0-9]", "", frame.upper()) or None
 
 

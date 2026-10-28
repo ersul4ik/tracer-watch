@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CartesianGrid, ComposedChart, Line, ReferenceLine, Scatter, XAxis, YAxis } from 'recharts'
+import { CartesianGrid, ReferenceLine, Scatter, ScatterChart, XAxis, YAxis } from 'recharts'
 import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/chart'
@@ -8,7 +8,7 @@ import { Switch } from '@/components/ui/switch'
 import { Empty } from '@/components/Lists'
 import { NoteChips } from '@/components/Notes'
 import { useApp } from '@/lib/context'
-import { grade, groupName, km, shortDate, yen, yenShort } from '@/lib/format'
+import { grade, groupName, joinParts, km, sales, shortDate, yen, yenShort } from '@/lib/format'
 import type { ArchiveRow } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -19,7 +19,8 @@ const chartConfig = {
 } satisfies ChartConfig
 
 // Axis labels must fit in ~50px: 2,2М / 750к
-const axisYen = (v: number) => (v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1).replace('.', ',')}М` : `${Math.round(v / 1000)}к`)
+const axisYen = (v: number) =>
+  v >= 1_000_000 ? `${(v / 1_000_000).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}М` : `${Math.round(v / 1000)}к`
 
 interface Point {
   x: number
@@ -52,7 +53,11 @@ function PointTooltip({ active, payload }: { active?: boolean; payload?: { paylo
 export function Archive({ rows }: { rows: ArchiveRow[] }) {
   const { board } = useApp()
   const [group, setGroup] = useState('all')
-  const [fromYear, setFromYear] = useState(String(board?.limits.min_year ?? 2018))
+  const [fromYear, setFromYear] = useState(() => {
+    // the bot's minimum year, if the archive has sales from it; otherwise any year
+    const y = board?.limits.min_year
+    return y && rows.some((r) => (r.year ?? 0) >= y) ? String(y) : 'all'
+  })
   const [goodOnly, setGoodOnly] = useState(true)
   const [withUnsold, setWithUnsold] = useState(false)
   const [limit, setLimit] = useState(40)
@@ -90,7 +95,9 @@ export function Archive({ rows }: { rows: ArchiveRow[] }) {
   }, [sold, board])
 
   const ourLimit = board?.limits.limit
-  const inLimit = sold.filter((r) => ourLimit && r.price <= ourLimit).length
+  const soldAll = filtered.filter((r) => r.sold)
+  const inLimit = soldAll.filter((r) => ourLimit && r.price <= ourLimit).length
+  const noKm = soldAll.length - sold.length
 
   return (
     <div className="flex flex-col gap-4">
@@ -132,14 +139,15 @@ export function Archive({ rows }: { rows: ArchiveRow[] }) {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        {sold.length} {sold.length === 1 ? 'продажа' : 'продаж'} за год
-        {ourLimit ? `, из них в наш лимит ${yenShort(ourLimit)} — ${inLimit}` : ''}. Пунктир — типичная цена с учётом
-        пробега, красная линия — наш лимит.
+        {sales(soldAll.length)} за год
+        {ourLimit ? `, из них в наш лимит ${yenShort(ourLimit)}: ${inLimit}` : ''}
+        {noKm ? ` (на графике без ${noKm} с неизвестным пробегом)` : ''}. Пунктир — типичная цена с учётом пробега, красная
+        линия — наш лимит.
       </p>
 
       {sold.length + unsold.length > 0 ? (
         <ChartContainer config={chartConfig} className="aspect-auto h-72 w-full">
-          <ComposedChart margin={{ top: 8, right: 8, bottom: 8, left: 4 }}>
+          <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 4 }}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis
               type="number"
@@ -159,6 +167,7 @@ export function Archive({ rows }: { rows: ArchiveRow[] }) {
               tickFormatter={axisYen}
               domain={['auto', 'auto']}
             />
+            {/* ScatterChart gives a per-point tooltip; a shared, axis-wide one picked up the curve or a neighbour */}
             <ChartTooltip content={<PointTooltip />} cursor={{ strokeDasharray: '3 3' }} />
             {ourLimit && (
               <ReferenceLine
@@ -166,20 +175,28 @@ export function Archive({ rows }: { rows: ArchiveRow[] }) {
                 stroke="var(--bad)"
                 strokeWidth={1.5}
                 strokeDasharray="4 4"
-                label={{ value: 'лимит', position: 'insideTopRight', fill: 'var(--bad)', fontSize: 11 }}
+                label={{ value: 'лимит', position: 'insideBottomLeft', fill: 'var(--bad)', fontSize: 11 }}
               />
             )}
             {curve.length > 0 && (
-              <Line data={curve} dataKey="y" type="monotone" stroke="var(--color-curve)" strokeDasharray="6 4" dot={false} strokeWidth={2} isAnimationActive={false} />
+              <Scatter
+                data={curve}
+                line={{ stroke: 'var(--color-curve)', strokeDasharray: '6 4', strokeWidth: 2 }}
+                lineType="joint"
+                shape={() => <g />}
+                legendType="none"
+                isAnimationActive={false}
+              />
             )}
             <Scatter data={sold.map(toPoint)} fill="var(--color-sold)" isAnimationActive={false} />
             {withUnsold && <Scatter data={unsold.map(toPoint)} fill="var(--color-unsold)" shape="diamond" isAnimationActive={false} />}
-          </ComposedChart>
+          </ScatterChart>
         </ChartContainer>
       ) : (
         <Empty>Под эти фильтры продаж нет.</Empty>
       )}
 
+      {filtered.length > 0 && (
       <ul className="flex flex-col divide-y rounded-xl border bg-card">
         {filtered.slice(0, limit).map((r) => {
           const delta = r.sold && r.estimate ? Math.round(((r.price - r.estimate) / r.estimate) * 100) : null
@@ -196,9 +213,7 @@ export function Archive({ rows }: { rows: ArchiveRow[] }) {
                 </span>
               </div>
               <div className="tabular flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground">
-                <span>
-                  {shortDate(r.date)} · {r.auction} · оценка {grade(r.rank)} · {km(r.mileage)}
-                </span>
+                <span>{joinParts(shortDate(r.date), r.auction, `оценка ${grade(r.rank)}`, km(r.mileage))}</span>
                 <span>
                   {r.sold ? (
                     <>
@@ -220,6 +235,7 @@ export function Archive({ rows }: { rows: ArchiveRow[] }) {
           )
         })}
       </ul>
+      )}
       {filtered.length > limit && (
         <Button variant="outline" onClick={() => setLimit(limit + 60)}>
           Показать ещё ({filtered.length - limit})

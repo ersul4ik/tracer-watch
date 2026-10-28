@@ -105,6 +105,54 @@ class Results(unittest.TestCase):
         self.assertTrue(store.state["lots"]["1"]["done"])
 
 
+class Crashes(unittest.TestCase):
+    def test_failed_reply_does_not_lose_the_pass(self):
+        """Telegram refusing a command reply must not undo the record of lots already sent."""
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        d = Path(tempfile.mkdtemp())
+        use_projapan()
+        tg = FakeTelegram()
+        chat = {"id": int(tg.chat_id)}
+        tg.updates = [{"update_id": 1, "message": {"chat": chat, "text": "/status"}}]
+        real_send = tg.send
+
+        def send(text, photo=None, button_url=None, reply_to=None):
+            if text.startswith("Последняя проверка"):
+                raise RuntimeError("Telegram sendMessage: 429")
+            return real_send(text, photo, button_url, reply_to)
+
+        tg.send = send
+        site = FakeSite(current=[lot(1, price=CHEAP)], sold=archive(price=CFG["limit"]))
+        with mock.patch.dict(CFG, {"db": d / "tracer.db", "state": d / "none.json", "token": "x", "chat_id": tg.chat_id}), \
+                mock.patch.object(cli, "Telegram", lambda *a, **k: tg), \
+                mock.patch.object(cli, "Site", lambda: site), \
+                mock.patch("sys.argv", ["bot", "--scan"]):
+            cli.main()
+        state = Store.open(d / "tracer.db").state
+        self.assertIn("1", state["lots"])
+        self.assertEqual(state["tg_offset"], 2)
+
+    def test_dry_run_note_is_refused(self):
+        from unittest import mock
+        with mock.patch("sys.argv", ["bot", "--dry-run", "--note", "X", "--tag", "seen"]):
+            with self.assertRaises(SystemExit):
+                cli.main()
+
+
+class DigestCopies(unittest.TestCase):
+    def test_copy_of_a_sent_lot_is_not_listed_as_skipped(self):
+        ma = lot(1, price=int(CFG["limit"] * 2))  # motoauction copy would be skipped on price
+        use_projapan({"pj:77": pj_lot(77, ma, price=CHEAP)})
+        store, tg = Store(), FakeTelegram()
+        store.state["lots_seeded"] = True
+        run_once(FakeSite(current=[], sold=archive(price=CFG["limit"])), tg, store)
+        self.assertEqual(len(tg.sent), 1)
+        run_once(FakeSite(current=[ma], sold=archive(price=CFG["limit"])), tg, store)
+        self.assertEqual(store.new_skipped_since(0), [])
+
+
 class Board(unittest.TestCase):
     def test_board_has_everything_the_page_reads(self):
         use_projapan()
@@ -138,9 +186,22 @@ class TelegramNotes(unittest.TestCase):
         commands = poll_commands(tg, store.state)
         self.assertEqual([c["cmd"] for c in commands], ["note", "check"])
         self.assertEqual(store.state["tg_offset"], 13)
-        self.assertTrue(cli.note_from_reply(store, tg, commands[0]))
+        self.assertIn("Записал метку", cli.note_from_reply(store, commands[0]))
         self.assertEqual(store.notes_for("RN51J000001")[0]["text"], "дорого, пропускаем")
-        self.assertIn("Записал метку", tg.sent[-1]["text"])
+
+    def test_command_sent_as_a_reply_is_still_a_command(self):
+        tg = FakeTelegram()
+        chat = {"id": int(tg.chat_id)}
+        texts = ["сходи посмотри", "Посмотри!", "/status", "статус", "посмотрел, дорого"]
+        tg.updates = [{"update_id": i, "message": {"chat": chat, "text": t, "reply_to_message": {"message_id": 5}}}
+                      for i, t in enumerate(texts)]
+        self.assertEqual([c["cmd"] for c in poll_commands(tg, {})], ["check", "check", "status", "status", "note"])
+
+    def test_resent_note_is_stored_once(self):
+        store = Store()
+        cli.add_note(store, "RN51J000001", "price", "дорого", source="web")
+        cli.add_note(store, "RN51J000001", "price", "дорого", source="web")
+        self.assertEqual(len(store.notes_for("RN51J000001")), 1)
 
     def test_cli_note_validation(self):
         store = Store()

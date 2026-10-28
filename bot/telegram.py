@@ -47,6 +47,8 @@ class Telegram:
 
 CHECK_RE = re.compile(r"/check|/scan|сходи|посмотр|провер|глян", re.I)
 STATUS_RE = re.compile(r"/status|статус|жив", re.I)
+# In a reply, only a whole message that is a command counts as one: "посмотрел, дорого" is a note
+REPLY_COMMAND_RE = re.compile(r"\s*(/\w+|сходи( посмотри)?|посмотри|проверь|глянь|статус|ты жив)\s*[.!?]*\s*$", re.I)
 HELP = ("Я слежу за лотами Tracer и пишу, когда появляется подходящий.\n"
         "• «сходи посмотри» или /check — проверить сайт прямо сейчас\n"
         "• /status — когда проверял последний раз\n"
@@ -75,7 +77,7 @@ def poll_commands(tg, state):
         text = (msg.get("text") or "").strip()
         reply_to = (msg.get("reply_to_message") or {}).get("message_id")
         # a reply to one of the bot's messages is a note on that lot, unless it is a command
-        if reply_to and text and not CHECK_RE.fullmatch(text) and not text.startswith("/"):
+        if reply_to and text and not REPLY_COMMAND_RE.match(text):
             commands.append({"cmd": "note", "reply_to": reply_to, "text": text})
         else:
             commands.append({"cmd": "check" if CHECK_RE.search(text) else "status" if STATUS_RE.search(text) else "help"})

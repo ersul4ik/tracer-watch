@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { dispatchNote, fetchBoard } from '@/lib/api'
-import { loadPending, reconcile, savePending, type PendingNote } from '@/lib/notes'
+import {
+  MAX_TRIES,
+  RESEND_AFTER_MS,
+  isFailed,
+  loadPending,
+  reconcile,
+  savePending,
+  type PendingNote,
+} from '@/lib/notes'
 import type { Board } from '@/lib/types'
+
+export type NoteInput = Pick<PendingNote, 'bike' | 'tag' | 'text' | 'lot' | 'deleteId'>
+
+function dispatch(note: NoteInput) {
+  const del = note.deleteId !== undefined
+  return dispatchNote({ bike: note.bike, tag: del ? 'delete' : note.tag, text: del ? String(note.deleteId) : note.text, lot: note.lot })
+}
 
 /** board.json plus the notes this browser has sent and the bot has not confirmed yet. */
 export function useBoard() {
@@ -10,9 +25,7 @@ export function useBoard() {
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState<PendingNote[]>(loadPending)
   const pendingRef = useRef(pending)
-  useEffect(() => {
-    pendingRef.current = pending
-  }, [pending])
+  const boardRef = useRef(board)
 
   const updatePending = useCallback((next: PendingNote[]) => {
     pendingRef.current = next
@@ -20,35 +33,54 @@ export function useBoard() {
     savePending(next)
   }, [])
 
+  // Resend notes that are still unconfirmed after a while: their run may have been dropped
+  const resendStale = useCallback(async () => {
+    const now = Date.now()
+    for (const p of pendingRef.current) {
+      if (p.tries >= MAX_TRIES || isFailed(p, now) || now - p.at < RESEND_AFTER_MS * p.tries) continue
+      try {
+        await dispatch(p)
+        updatePending(pendingRef.current.map((x) => (x === p ? { ...x, tries: x.tries + 1 } : x)))
+      } catch {
+        /* the next refresh tries again; the timeout turns it into a visible failure */
+      }
+    }
+  }, [updatePending])
+
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
       const b = await fetchBoard()
+      boardRef.current = b
       setBoard(b)
       setError(null)
       updatePending(reconcile(pendingRef.current, b))
+      await resendStale()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
-  }, [updatePending])
+  }, [updatePending, resendStale])
 
   useEffect(() => {
     refresh()
   }, [refresh])
 
   // While notes are on their way, check every 30 s; otherwise every 5 minutes
+  const waiting = pending.some((p) => !isFailed(p, Date.now()))
   useEffect(() => {
-    const id = window.setInterval(refresh, pending.length ? 30_000 : 300_000)
+    const id = window.setInterval(refresh, waiting ? 30_000 : 300_000)
     return () => window.clearInterval(id)
-  }, [refresh, pending.length])
+  }, [refresh, waiting])
 
+  /** Sends a note; on success it shows as pending until the bot confirms it. Throws on failure. */
   const sendNote = useCallback(
-    async (note: Omit<PendingNote, 'at'>) => {
-      await dispatchNote({ bike: note.bike, tag: note.deleteId !== undefined ? 'delete' : note.tag,
-                           text: note.deleteId !== undefined ? String(note.deleteId) : note.text, lot: note.lot })
-      updatePending([...pendingRef.current, { ...note, at: Date.now() }])
+    async (note: NoteInput, replaces?: PendingNote) => {
+      await dispatch(note)
+      const known = (boardRef.current?.notes[note.bike] ?? []).map((n) => n.id)
+      const rest = pendingRef.current.filter((x) => x !== replaces)
+      updatePending([...rest, { ...note, at: Date.now(), tries: 1, known }])
     },
     [updatePending],
   )

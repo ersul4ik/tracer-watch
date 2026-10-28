@@ -1,11 +1,12 @@
 import { createContext, useContext } from 'react'
+import type { NoteInput } from '@/hooks/useBoard'
 import type { PendingNote } from './notes'
 import type { Board } from './types'
 
 export interface AppState {
   board: Board | null
   pending: PendingNote[]
-  sendNote: (note: Omit<PendingNote, 'at'>) => Promise<void>
+  sendNote: (note: NoteInput, replaces?: PendingNote) => Promise<void>
   dropPending: (p: PendingNote) => void
   openSettings: () => void
 }

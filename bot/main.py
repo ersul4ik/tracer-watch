@@ -29,35 +29,50 @@ def board_path():
     return CFG["db"].parent / "board.json"
 
 
+# The web page resends a note it has not seen confirmed (its run may have been dropped from
+# GitHub's queue), so the same note within this window is a resend, not a new one
+RESEND_WINDOW = 30 * 60
+
+
 def add_note(store, bike, tag, text, lot_key=None, source="cli"):
     """A note from the web page or the command line. Tag "delete" removes the note whose id is in text."""
     bike = (bike or "").strip()
+    text = (text or "").strip()[:500]
     if not re.fullmatch(r"[\w|.:-]{1,64}", bike):
         raise ValueError(f"bad bike id: {bike!r}")
     if tag == "delete":
-        removed = store.delete_note(int(text))
+        removed = store.delete_note(int(text), bike)
         log(f"note {text} on {bike}: removed {removed}")
         return
     if tag and tag not in TAGS:
         raise ValueError(f"unknown tag: {tag!r}")
-    if not tag and not (text or "").strip():
+    if not tag and not text:
         raise ValueError("empty note")
-    note_id = store.add_note(bike, tag, (text or "")[:500], lot_key=lot_key, source=source)
+    now = time.time()
+    if any(n["tag"] == tag and n["text"] == text and now - n["created_at"] < RESEND_WINDOW
+           for n in store.notes_for(bike)):
+        log(f"note on {bike} already stored, a resend: {tag} {text}")
+        return
+    note_id = store.add_note(bike, tag, text, lot_key=lot_key or None, source=source)
     log(f"note {note_id} on {bike}: {tag} {text}")
 
 
-def note_from_reply(store, tg, cmd):
-    """A reply to a lot alert becomes a note on that bike."""
+def note_from_reply(store, cmd):
+    """A reply to a lot alert becomes a note on that bike. Returns the text to answer with."""
     found = next(((k, e) for k, e in store.state["lots"].items() if e.get("msg") == cmd["reply_to"]), None)
     if not found:
-        tg.send("Не понял, к какому лоту это. Ответь на моё сообщение с лотом — запишу как метку.",
-                reply_to=cmd["reply_to"])
-        return False
+        return "Не понял, к какому лоту это. Ответь на моё сообщение с лотом — запишу как метку."
     key, entry = found
     store.add_note(entry.get("bike") or key, "", cmd["text"][:500], lot_key=key, source="telegram")
-    tg.send(f"📝 Записал метку к {html.escape(entry.get('title') or key)}: {html.escape(cmd['text'][:500])}",
-            reply_to=cmd["reply_to"])
-    return True
+    return f"📝 Записал метку к {html.escape(entry.get('title') or key)}: {html.escape(cmd['text'][:500])}"
+
+
+def send_quietly(tg, text, reply_to=None):
+    """A reply to a command: if Telegram refuses it, the pass must still count as done."""
+    try:
+        tg.send(text, reply_to=reply_to)
+    except (RuntimeError, OSError) as e:
+        log("reply failed:", e)
 
 
 def main():
@@ -71,15 +86,18 @@ def main():
     p.add_argument("--tag", default="", help=f"with --note: {', '.join(TAGS)}, or delete (text is the note id)")
     p.add_argument("--text", default="", help="with --note: the note text")
     p.add_argument("--lot", default=None, help="with --note: key of the lot the note was left on")
+    p.add_argument("--source", default="cli", choices=["cli", "web"], help="with --note: where it came from")
     p.add_argument("--whoami", action="store_true", help="print chat ids from recent messages to the bot")
     p.add_argument("--test", action="store_true", help="send a test message")
     p.add_argument("--scan", action="store_true", help="check the sites now instead of waiting for SCAN_EVERY_MIN")
     args = p.parse_args()
 
     if args.note is not None:
+        if args.dry_run:
+            sys.exit("--note stores the note in the database; drop --dry-run")
         store = Store.open(CFG["db"], legacy=CFG["state"])
         try:
-            add_note(store, args.note, args.tag, args.text, lot_key=args.lot)
+            add_note(store, args.note, args.tag, args.text, lot_key=args.lot, source=args.source)
             refresh_notes(args.board or board_path(), store)
         finally:
             store.save()
@@ -117,15 +135,19 @@ def main():
             # last_scan stays put, so the next run in 5 minutes tries again
             note_site_down(state, tg, e)
         finally:
-            noted = [note_from_reply(store, tg, c) for c in commands if c["cmd"] == "note"]
-            if any(noted) and summary is None:
+            notes = [c for c in commands if c["cmd"] == "note"]
+            answers = [(note_from_reply(store, c), c["reply_to"]) for c in notes]
+            if notes and not args.dry_run:
                 refresh_notes(board_path(), store)
-            for cmd in dict.fromkeys(c["cmd"] for c in commands if c["cmd"] != "note"):  # three check requests, one reply
-                tg.send(scan_reply(summary) if cmd == "check" else
-                        status_reply(state) if cmd == "status" else HELP)
-            # even after a crash mid-pass: lots already sent must not go out a second time
+            # Save before answering: even after a crash mid-pass, or if Telegram refuses a reply,
+            # lots already sent must not go out a second time and commands must not be re-read
             if not args.dry_run:
                 store.save()
+            for text, reply_to in answers:
+                send_quietly(tg, text, reply_to)
+            for cmd in dict.fromkeys(c["cmd"] for c in commands if c["cmd"] != "note"):  # three check requests, one reply
+                send_quietly(tg, scan_reply(summary) if cmd == "check" else
+                             status_reply(state) if cmd == "status" else HELP)
         if not args.loop:
             break
         time.sleep(args.loop)

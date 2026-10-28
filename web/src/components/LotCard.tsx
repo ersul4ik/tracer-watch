@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { NoteButton, NoteChips } from '@/components/Notes'
-import { daysLeft, daysUntil, grade, km, yen, yenShort } from '@/lib/format'
+import { daysLeft, daysUntil, grade, joinParts, km, sales, yen, yenShort } from '@/lib/format'
 import type { Lot } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -52,32 +52,32 @@ function Row({ label, children, strong }: { label: string; children: React.React
 export function LotCard({ lot }: { lot: Lot }) {
   const title = `${lot.model} · ${lot.year ?? 'год ?'}`
   const serious = lot.inspection.filter((x) => x.serious)
-  const urgent = daysUntil(lot.date_iso, lot.days) <= 1
+  const days = daysUntil(lot.date_iso)
+  const urgent = days !== null && days <= 1
   return (
     <Card className="overflow-hidden pt-0">
       <div className="relative">
         <Photo src={lot.photo} alt={title} className="aspect-[4/3] w-full" />
         <div className="absolute inset-x-2 top-2 flex flex-wrap gap-1.5">
-          <Badge className={cn(urgent ? 'bg-bad text-white' : 'bg-background/90 text-foreground backdrop-blur')}>
-            {daysLeft(daysUntil(lot.date_iso, lot.days))} · {lot.date?.slice(0, 5)}
+          <Badge className={cn(urgent ? 'bg-bad-strong text-white' : 'bg-background/90 text-foreground backdrop-blur')}>
+            {joinParts(daysLeft(days), lot.date?.slice(0, 5))}
           </Badge>
           {lot.sent && <Badge className="bg-background/90 text-foreground backdrop-blur">присылал в Telegram</Badge>}
         </div>
       </div>
       <CardContent className="flex flex-col gap-3">
         <div>
-          <h3 className="text-lg font-semibold leading-tight text-balance">{title}</h3>
+          <h3 className="text-lg leading-tight font-semibold text-balance [overflow-wrap:anywhere]">{title}</h3>
           <p className="tabular mt-1 text-sm text-muted-foreground">
-            оценка <span className="font-semibold text-foreground">{grade(lot.rank)}</span> · {km(lot.mileage)} ·{' '}
-            {lot.auction} · лот {lot.lot_no ?? '—'}
-            {lot.color ? ` · ${lot.color}` : ''}
+            оценка <span className="font-semibold text-foreground">{grade(lot.rank)}</span> ·{' '}
+            {joinParts(km(lot.mileage), lot.auction, lot.lot_no && `лот ${lot.lot_no}`, lot.color)}
           </p>
         </div>
 
         <div className="flex flex-wrap gap-1.5">
           {lot.relist_of && (
             <Flag tone="info">
-              🔁 перевыставлен: {lot.relist_of.date?.slice(0, 5)} ставка дошла до {yenShort(lot.relist_of.bid)}
+              🔁 перевыставлен{lot.relist_of.bid ? `: ${lot.relist_of.date?.slice(0, 5) ?? ''} ставка дошла до ${yenShort(lot.relist_of.bid)}` : ''}
             </Flag>
           )}
           {lot.flags.top && <Flag tone="ok">🔥 топ-оценка</Flag>}
@@ -95,7 +95,7 @@ export function LotCard({ lot }: { lot: Lot }) {
               <>
                 ~{yen(lot.estimate.median)}
                 <span className="block text-xs text-muted-foreground">
-                  {yenShort(lot.estimate.lo)}–{yenShort(lot.estimate.hi)}, {lot.estimate.n} продаж
+                  {yenShort(lot.estimate.lo)}–{yenShort(lot.estimate.hi)}, {sales(lot.estimate.n)}
                 </span>
               </>
             ) : lot.site_avg ? (
@@ -122,7 +122,7 @@ export function LotCard({ lot }: { lot: Lot }) {
                   <li
                     key={i}
                     className={cn(
-                      'rounded-md px-2.5 py-1.5',
+                      'rounded-md px-2.5 py-1.5 [overflow-wrap:anywhere]',
                       x.serious ? 'bg-bad-soft' : x.kind === 'comment' ? 'bg-accent' : 'bg-muted',
                     )}
                   >

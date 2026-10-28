@@ -94,13 +94,18 @@ class Store:
     def open(cls, path, legacy=None):
         """The database at path; when it does not exist yet and an old state.json does, imports it."""
         path = Path(path)
-        fresh = not path.exists()
         path.parent.mkdir(parents=True, exist_ok=True)
-        store = cls(path)
-        if fresh and legacy and Path(legacy).exists():
+        if not path.exists() and legacy and Path(legacy).exists():
+            # import into a temporary file and move it in place only once it worked:
+            # a half-done import must not leave a database that is never imported again
+            tmp = path.with_suffix(".importing")
+            tmp.unlink(missing_ok=True)
+            store = cls(tmp)
             store.import_state_json(json.loads(Path(legacy).read_text()))
             log(f"imported {legacy} into the database: {len(store.state['lots'])} sent lots")
-        return store
+            store.close()
+            tmp.replace(path)
+        return cls(path)
 
     def close(self):
         self.conn.close()
@@ -178,7 +183,7 @@ class Store:
     def new_skipped_since(self, since):
         """Lots on sale first seen after since that did not qualify, as digest lines."""
         rows = self.conn.execute(
-            "SELECT * FROM lots WHERE first_seen > ? AND availability = 0"
+            "SELECT * FROM lots WHERE first_seen > ?"
             " AND (last_reason IS NOT NULL OR legacy_line IS NOT NULL)"
             " AND key NOT IN (SELECT key FROM sent) ORDER BY first_seen", (since,))
         out = []
@@ -189,6 +194,11 @@ class Store:
                 out.append(f"{r['model']} {r['year'] or '?'} · оценка {r['rank'] or '?'}"
                            f" · торги {(r['auction_date'] or '?')[:5]} — {r['last_reason']}")
         return out
+
+    def forget_unlisted(self, now):
+        """Lots on sale not seen in this pass dropped out of the listings: their status is unknown now."""
+        with self.conn:
+            self.conn.execute("UPDATE lots SET availability = NULL WHERE availability = 0 AND last_seen < ?", (now,))
 
     def count_lots(self):
         return self.conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
@@ -202,9 +212,9 @@ class Store:
                 (bike, lot_key, tag or "", (text or "").strip(), source, int(now or time.time())))
         return cur.lastrowid
 
-    def delete_note(self, note_id):
+    def delete_note(self, note_id, bike):
         with self.conn:
-            return self.conn.execute("DELETE FROM notes WHERE id = ?", (note_id,)).rowcount
+            return self.conn.execute("DELETE FROM notes WHERE id = ? AND bike = ?", (note_id, bike)).rowcount
 
     def notes_for(self, bike):
         if not bike:

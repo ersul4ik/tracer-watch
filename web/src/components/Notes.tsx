@@ -3,69 +3,95 @@ import { Loader2, PenLine, RotateCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
-import { useNow } from '@/hooks/useNow'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useNow } from '@/hooks/useNow'
 import { getToken } from '@/lib/api'
 import { useApp } from '@/lib/context'
 import { dateTime } from '@/lib/format'
-import { PENDING_TIMEOUT_MS, TAGS, noteLabel, notesFor } from '@/lib/notes'
+import { TAGS, isFailed, noteLabel, notesFor, type PendingNote } from '@/lib/notes'
+import type { Note } from '@/lib/types'
 import { cn } from '@/lib/utils'
+
+const chip = 'max-w-full rounded-md px-2 py-0.5 text-xs [overflow-wrap:anywhere]'
+
+function sourceTag(n: Note) {
+  return n.source === 'telegram' ? ' · TG' : ''
+}
+
+/** A failed note or deletion: retry or dismiss, with buttons big enough for a finger. */
+function FailedChip({ p, label }: { p: PendingNote; label: string }) {
+  const { sendNote, dropPending } = useApp()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <span className={cn(chip, 'inline-flex flex-wrap items-center gap-1 border border-dashed border-bad text-bad')}>
+      {label}
+      <button
+        className="inline-flex size-7 items-center justify-center rounded-md hover:bg-bad-soft"
+        aria-label="Отправить ещё раз"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true)
+          setError(null)
+          try {
+            await sendNote({ bike: p.bike, tag: p.tag, text: p.text, lot: p.lot, deleteId: p.deleteId }, p)
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      >
+        {busy ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
+      </button>
+      <button
+        className="inline-flex size-7 items-center justify-center rounded-md hover:bg-bad-soft"
+        aria-label="Убрать"
+        onClick={() => dropPending(p)}
+      >
+        <X className="size-4" />
+      </button>
+      {error && <span className="basis-full">{error}</span>}
+    </span>
+  )
+}
 
 /** Notes on a bike as small chips, including the ones still on their way to the bot. */
 export function NoteChips({ bike, className }: { bike: string; className?: string }) {
-  const { board, pending, sendNote, dropPending } = useApp()
-  const now = useNow()
+  const { board, pending } = useApp()
+  const now = useNow() * 1000
   const notes = notesFor(board, bike)
   const mine = pending.filter((p) => p.bike === bike)
-  const deleting = new Set(mine.filter((p) => p.deleteId !== undefined).map((p) => p.deleteId))
+  const deleting = new Map(mine.filter((p) => p.deleteId !== undefined).map((p) => [p.deleteId, p]))
   if (!notes.length && !mine.length) return null
   return (
-    <div className={cn('flex flex-wrap gap-1.5', className)}>
-      {notes.map((n) => (
-        <span
-          key={n.id}
-          title={`${dateTime(n.created_at)} · ${n.source === 'telegram' ? 'из Telegram' : 'с сайта'}`}
-          className={cn(
-            'rounded-md bg-accent px-2 py-0.5 text-xs text-accent-foreground',
-            deleting.has(n.id) && 'line-through opacity-50',
-          )}
-        >
-          {noteLabel(n)}
-        </span>
-      ))}
+    <div className={cn('flex min-w-0 flex-wrap gap-1.5', className)}>
+      {notes.map((n) => {
+        const del = deleting.get(n.id)
+        if (del && isFailed(del, now)) return <FailedChip key={n.id} p={del} label={`не удалилось: ${noteLabel(n)}`} />
+        return (
+          <span
+            key={n.id}
+            title={`${dateTime(n.created_at)} · ${n.source === 'telegram' ? 'из Telegram' : 'с сайта'}`}
+            className={cn(chip, 'bg-accent text-accent-foreground', del && 'line-through opacity-50')}
+          >
+            {noteLabel(n)}
+            <span className="opacity-60">{sourceTag(n)}</span>
+          </span>
+        )
+      })}
       {mine
         .filter((p) => p.deleteId === undefined)
-        .map((p) => {
-          const failed = now * 1000 - p.at > PENDING_TIMEOUT_MS
-          return (
-            <span
-              key={p.at}
-              className={cn(
-                'inline-flex items-center gap-1 rounded-md border border-dashed px-2 py-0.5 text-xs',
-                failed ? 'border-bad text-bad' : 'text-muted-foreground',
-              )}
-            >
-              {failed ? 'не сохранилось: ' : <Loader2 className="size-3 animate-spin" />}
+        .map((p) =>
+          isFailed(p, now) ? (
+            <FailedChip key={p.at} p={p} label={`не сохранилось: ${noteLabel(p)}`} />
+          ) : (
+            <span key={p.at} className={cn(chip, 'inline-flex items-center gap-1 border border-dashed text-muted-foreground')}>
+              <Loader2 className="size-3 shrink-0 animate-spin" />
               {noteLabel(p)}
-              {failed && (
-                <>
-                  <button
-                    className="ml-1 underline"
-                    onClick={() => {
-                      dropPending(p)
-                      sendNote({ bike: p.bike, tag: p.tag, text: p.text, lot: p.lot }).catch(() => {})
-                    }}
-                  >
-                    <RotateCw className="size-3" aria-label="Повторить" />
-                  </button>
-                  <button onClick={() => dropPending(p)}>
-                    <X className="size-3" aria-label="Убрать" />
-                  </button>
-                </>
-              )}
             </span>
-          )
-        })}
+          ),
+        )}
     </div>
   )
 }
@@ -73,13 +99,16 @@ export function NoteChips({ bike, className }: { bike: string; className?: strin
 /** Button + dialog: leave a quick tag and/or a comment on a bike. */
 export function NoteButton({ bike, lot, title }: { bike: string; lot: string; title: string }) {
   const { board, pending, sendNote, openSettings } = useApp()
+  const now = useNow() * 1000
   const [open, setOpen] = useState(false)
   const [tag, setTag] = useState('')
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const notes = notesFor(board, bike)
-  const deleting = new Set(pending.filter((p) => p.bike === bike && p.deleteId !== undefined).map((p) => p.deleteId))
+  const deleting = new Map(
+    pending.filter((p) => p.bike === bike && p.deleteId !== undefined).map((p) => [p.deleteId, p]),
+  )
   const hasToken = Boolean(getToken())
 
   async function save() {
@@ -100,7 +129,7 @@ export function NoteButton({ bike, lot, title }: { bike: string; lot: string; ti
   async function remove(id: number) {
     setError(null)
     try {
-      await sendNote({ bike, tag: '', text: '', lot, deleteId: id })
+      await sendNote({ bike, tag: '', text: '', lot, deleteId: id }, deleting.get(id))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -116,24 +145,35 @@ export function NoteButton({ bike, lot, title }: { bike: string; lot: string; ti
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Метка</DialogTitle>
-            <DialogDescription>{title}. Метка привязана к раме: её будет видно и после перевыставления.</DialogDescription>
+            <DialogDescription>{title}. Метка привязана к мотоциклу: её будет видно и после перевыставления.</DialogDescription>
           </DialogHeader>
 
           {notes.length > 0 && (
             <ul className="flex flex-col gap-1.5">
-              {notes.map((n) => (
-                <li key={n.id} className="flex items-start justify-between gap-2 rounded-md bg-muted px-2.5 py-1.5 text-sm">
-                  <span className={cn(deleting.has(n.id) && 'line-through opacity-50')}>
-                    {noteLabel(n)}
-                    <span className="ml-2 text-xs text-muted-foreground">{dateTime(n.created_at)}</span>
-                  </span>
-                  {hasToken && !deleting.has(n.id) && (
-                    <button className="text-muted-foreground hover:text-foreground" onClick={() => remove(n.id)}>
-                      <X className="size-4" aria-label="Удалить метку" />
-                    </button>
-                  )}
-                </li>
-              ))}
+              {notes.map((n) => {
+                const del = deleting.get(n.id)
+                const inFlight = del && !isFailed(del, now)
+                return (
+                  <li key={n.id} className="flex items-center justify-between gap-2 rounded-md bg-muted py-1 pr-1 pl-2.5 text-sm">
+                    <span className={cn('min-w-0 [overflow-wrap:anywhere]', inFlight && 'line-through opacity-50')}>
+                      {noteLabel(n)}
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {dateTime(n.created_at)}
+                        {n.source === 'telegram' ? ' · из Telegram' : ''}
+                      </span>
+                    </span>
+                    {hasToken && !inFlight && (
+                      <button
+                        className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground"
+                        aria-label="Удалить метку"
+                        onClick={() => remove(n.id)}
+                      >
+                        <X className="size-4" />
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
 

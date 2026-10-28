@@ -206,23 +206,28 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
                 reason, prev = verdict(lot)  # a projapan lot page can bring the grade
             except (OSError, ValueError) as e:
                 log(f"lot {key}: {e!r}")
-        item = board_lot(lot, detail or lot.get("detail") or {}, reason, prev, stats, urls(lot),
-                         key in lots_state or same_lot_key(lot) in sent_same)
+        sent = key in lots_state or same_lot_key(lot) in sent_same
+        item = board_lot(lot, detail or lot.get("detail") or {}, reason, prev, stats, urls(lot), sent)
         board_lots.append(item)
+        # a lot already sent (or its copy on the other site) is not "skipped" in the digest
         store.record_lot(lot_row(lot, detail, (item["estimate"] or {}).get("median")), int(now),
-                         reason=reason, with_reason=True, first_seen=first_seen)
+                         reason=None if sent else reason, with_reason=True, first_seen=first_seen)
     # copies from the other site and the sales archive go to the db too: our own archive
     for key, lot in everywhere.items():
         if key not in lots:
             store.record_lot(lot_row(lot), int(now), first_seen=first_seen)
     for lot in stats.sold + stats.unsold:
         store.record_lot(lot_row(lot), int(now), first_seen=first_seen)
+    store.forget_unlisted(int(now))
     state["lots_seeded"] = True
     for key, entry in lots_state.items():  # entries from before this version lack a title and a bike
         if key in everywhere:
             entry.setdefault("title", lot_title(everywhere[key]))
             entry.setdefault("url", everywhere[key]["url"])
             entry.setdefault("bike", bike_id(everywhere[key]))
+            # entries sent before cross-site matching existed lack it; fill it in while the lot is listed
+            if not entry.get("same"):
+                entry["same"] = same_lot_key(everywhere[key])
 
     # the digest comes after lots are stored, so it includes the ones first seen in this pass
     if not tg.dry_run:

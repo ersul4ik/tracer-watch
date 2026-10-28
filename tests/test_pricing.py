@@ -16,6 +16,7 @@ class Keys(unittest.TestCase):
         self.assertEqual(frame_key({"frame": "rn51j-003241"}), "RN51J003241")
         self.assertEqual(frame_key({"detail": {"frame_number": "RN51J 003241"}}), "RN51J003241")
         self.assertIsNone(frame_key({}))
+        self.assertIsNone(frame_key({"frame": "RNA1J-000***"}))  # masked: not an identity
 
     def test_bike_id_prefers_frame(self):
         self.assertEqual(bike_id(lot(5, frame="RN51J-000005")), "RN51J000005")
