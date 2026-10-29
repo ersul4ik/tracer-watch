@@ -66,6 +66,7 @@ class Check(unittest.TestCase):
         self.assertEqual(check(lot(1, rank=0, date=5), self.stats), "оценки пока нет")
         self.assertIsNone(check(lot(1, rank=0, date=1), self.stats))  # auction tomorrow: send without a grade
         self.assertIn("модель", check(lot(1, model="MT-09"), self.stats))
+        self.assertNotIn("модель", check(lot(1, model="TRACKER 900"), self.stats) or "")  # motoauction's typo
 
     def test_start_near_limit_still_fits(self):
         near = int(CFG["limit"] * (CFG["near_ratio"] - 0.02))

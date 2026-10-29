@@ -19,7 +19,7 @@ def stats_model(name):
     compact = re.sub(r"\s+|ABS", "", (name or "").upper()).replace("YAMAHA", "")
     if "900GT" in compact or compact == "MT-09TRACERGT":
         return "MT-09TRACERGT"
-    if compact in ("MT-09TRACER", "TRACER900"):
+    if compact in ("MT-09TRACER", "TRACER900", "TRACKER900"):
         return "MT-09TRACER"
     return compact
 

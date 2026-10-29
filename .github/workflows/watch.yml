@@ -119,8 +119,10 @@ jobs:
           if [ -f tracer.db ] && [ -f state.json ]; then git rm -q state.json; fi
           git add -A
           git diff --cached --quiet && exit 0
-          git push -q -f origin HEAD:state-prev
+          git push -q -f origin HEAD:state-prev || echo "backup push failed, carrying on"
           git checkout -q --orphan fresh
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -q -m "Update state"
-          git push -q -f origin HEAD:state
+          # GitHub sometimes refuses a push ("fatal error in commit_refs"): try again before giving up
+          for i in 1 2 3; do git push -q -f origin HEAD:state && exit 0; sleep $((i * 5)); done
+          exit 1

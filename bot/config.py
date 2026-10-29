@@ -43,7 +43,8 @@ CFG = {
     "token": env_str("TG_BOT_TOKEN"),
     "chat_id": env_str("TG_CHAT_ID"),
     "brand": env_str("BRAND", "Yamaha"),
-    "model_re": re.compile(env_str("MODEL_PATTERN", r"TRACER"), re.I),
+    # motoauction also files some Tracers under a misspelt "TRACKER 900" group
+    "model_re": re.compile(env_str("MODEL_PATTERN", r"TRACER|TRACKER ?900"), re.I),
     "min_year": env_int("MIN_YEAR", 2018),
     # Tracer frame prefixes to search projapan by: RN51J is 2018-20 (Tracer 900/GT), RN70J 2021-23,
     # RN99J and RNA1J 2025+. RN36J (2015-17) is left out: the year filter would drop it anyway
