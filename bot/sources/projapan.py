@@ -69,7 +69,7 @@ class ProJapan:
                "availability": self.STATUS.get((x.get("auction_status"), x.get("sold_status")), NOT_SOLD),
                "auction": auction, "auction_date": day.strftime("%d.%m.%Y") if day else None,
                "bid": x.get("lot_number"), "mileage": x.get("mileage"), "volume": x.get("cubature"),
-               "pathImg": x.get("preview"), "final": x.get("price_end") or 0}
+               "pathImg": self._absolute(x.get("preview")), "final": x.get("price_end") or 0}
         lot["detail"] = {
             "price_start_jpy": lot["price"], "average_price_jpy": 0, "color": x.get("color"),
             "auction_line": f"{auction} {place}".strip(), "lot_number": x.get("lot_number"),
@@ -78,6 +78,10 @@ class ProJapan:
             "ratings_line": self._ratings_line(x),
             "availability": lot["availability"], "price_finish_jpy": lot["final"]}
         return lot
+
+    def _absolute(self, path):
+        """Previews come as site-relative paths; Telegram and the web page need a full URL."""
+        return f"{self.BASE}{path}" if path and path.startswith("/") else path
 
     @staticmethod
     def _ratings_line(x):
