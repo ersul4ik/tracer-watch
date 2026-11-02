@@ -27,6 +27,15 @@ class Keys(unittest.TestCase):
         self.assertEqual(stats_model("TRACER 900"), stats_model("MT-09 TRACER"))
 
 
+class ModelKey(unittest.TestCase):
+    def test_frame_decides_the_generation(self):
+        from bot.pricing import model_key
+        self.assertEqual(model_key({"model": "MT-09 TRACER GT", "frame": "RN70J-000545"}), "TRACER9GT")
+        self.assertEqual(model_key({"model": "MT-09 TRACER GT", "frame": "RN51J-002283"}), "MT-09TRACERGT")
+        self.assertEqual(model_key({"model": "Tracer 900 GT", "detail": {"frame_number": "RN51J-003332"}}), "MT-09TRACERGT")
+        self.assertEqual(model_key({"model": "TRACER9 GT+ ABS", "frame": "RN70J-002644"}), "TRACER9GT+")
+
+
 class Limits(unittest.TestCase):
     def test_top_rank_raises_limit(self):
         self.assertEqual(limit_for(4), CFG["limit"])

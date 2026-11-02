@@ -12,7 +12,7 @@ from pathlib import Path
 from .config import CFG, FOR_SALE, NOT_SOLD, SOLD
 from .messages import inspection_lines
 from .pricing import (auction_day, bike_id, days_to_auction, expected_price, frame_key, landed_usd, limit_for,
-                      same_lot_key, stats_model, suggested_bid)
+                      model_key, same_lot_key, suggested_bid)
 
 VERSION = 1
 
@@ -48,7 +48,7 @@ def board_lot(lot, detail, reason, prev, stats, urls, sent):
     lines = [html.unescape(x) for x in inspection_lines(detail)]
     return {
         "key": str(lot["id"]), "bike": bike_id(lot), "site": lot.get("site") or "motoauction",
-        "model": lot.get("model"), "group": stats_model(lot.get("model")), "year": lot.get("year"),
+        "model": lot.get("model"), "group": model_key(lot), "year": lot.get("year"),
         "rank": rank, "mileage": lot.get("mileage"), "start": start or None,
         "date": lot.get("auction_date"), "date_iso": iso_day(lot), "days": days_to_auction(lot),
         "auction": detail.get("auction_line") or lot.get("auction"),
@@ -101,7 +101,7 @@ def board_archive(stats):
         sold = lot.get("availability") == SOLD
         est = stats.estimate(lot) if sold else None
         rows.append({"key": str(lot["id"]), "bike": bike_id(lot), "model": lot.get("model"),
-                     "group": stats_model(lot.get("model")), "year": lot.get("year"), "rank": lot.get("rank"),
+                     "group": model_key(lot), "year": lot.get("year"), "rank": lot.get("rank"),
                      "mileage": lot.get("mileage"), "price": lot.get("price"), "sold": sold,
                      "site_avg": lot.get("AveragePrice") or None, "estimate": est["median"] if est else None,
                      "date": lot.get("auction_date"), "date_iso": iso_day(lot), "auction": lot.get("auction"),

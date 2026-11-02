@@ -24,6 +24,18 @@ def stats_model(name):
     return compact
 
 
+def model_key(lot):
+    """The model a lot is priced as. The frame decides the generation: motoauction files some
+    2021+ Tracer 9 GTs (frames RN70J and up) under "MT-09 TRACER GT", next to the cheaper 900 GTs."""
+    name = stats_model(lot.get("model"))
+    frame = (lot.get("frame") or (lot.get("detail") or {}).get("frame_number") or "").upper()
+    if frame.startswith(("RN70J", "RN99J", "RNA1J")):
+        return "TRACER9GT+" if "+" in name else "TRACER9GT"
+    if frame.startswith("RN51J") and name.startswith("TRACER9"):
+        return "MT-09TRACERGT"
+    return name
+
+
 class Stats:
     """What similar lots actually sold for, from the same site's sales archive for the past year.
 
@@ -74,7 +86,7 @@ class Stats:
         groups = {}
         for s in self.sold:
             if s.get("mileage") and s.get("rank") and (s.get("year") or 0) >= CFG["min_year"]:
-                key = (stats_model(s.get("model")), s["year"], s["rank"])
+                key = (model_key(s), s["year"], s["rank"])
                 groups.setdefault(key, []).append((s["mileage"] / 1000, math.log(s["price"])))
         sxy = sxx = 0
         for pts in groups.values():
@@ -105,14 +117,14 @@ class Stats:
         """
         if self.sold is None:
             self._load()
-        model, year, rank = stats_model(lot.get("model")), lot.get("year") or 0, lot.get("rank")
+        model, year, rank = model_key(lot), lot.get("year") or 0, lot.get("rank")
         km = lot.get("mileage")
         for years, by_rank in ((1, True), (1, False), (2, False)):
             if by_rank and not rank:
                 continue
             prices = sorted(
                 self._at_mileage(s, km) for s in self.sold
-                if stats_model(s.get("model")) == model and abs((s.get("year") or 0) - year) <= years
+                if model_key(s) == model and abs((s.get("year") or 0) - year) <= years
                 and (not by_rank or (s.get("rank") and abs(s["rank"] - rank) <= 1))
                 and s.get("id") != lot.get("id"))
             if len(prices) >= 3:
