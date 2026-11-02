@@ -24,14 +24,19 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
     state = store.state
     lots_state = state["lots"]
     first_run = "digest_at" not in state
-    groups = [g for g in site.model_groups(CFG["brand"]) if CFG["model_re"].search(g)]
-    lots = {}
-    for g in groups:
-        for lot in site.lots(CFG["brand"], g):
-            lot["url"] = f"{SITE}/{lot['id']}"
-            lots[str(lot["id"])] = lot
-    log(f"groups: {groups}; lots: {len(lots)}")
-    stats = Stats(site, groups)
+    # Either site may be down; the pass carries on with the other one and fails only if both are
+    groups, lots, ma_error = [], {}, None
+    try:
+        groups = [g for g in site.model_groups(CFG["brand"]) if CFG["model_re"].search(g)]
+        for g in groups:
+            for lot in site.lots(CFG["brand"], g):
+                lot["url"] = f"{SITE}/{lot['id']}"
+                lots[str(lot["id"])] = lot
+        log(f"groups: {groups}; lots: {len(lots)}")
+    except (OSError, ValueError) as e:
+        ma_error, groups, lots = e, [], {}
+        log("motoauction did not answer:", repr(e))
+    stats = Stats(site, groups, store)
 
     # projapan adds only what motoauction lacks. If it fails, motoauction lots still go out:
     # the pass just runs without the second source
@@ -47,6 +52,9 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
         lots.update(extra)
     except (OSError, ValueError) as e:
         log("projapan did not answer:", repr(e))
+        if ma_error:
+            raise ma_error  # both down: nothing to look at
+    note_motoauction(state, tg, ma_error)
 
     def same_of(key):
         entry, lot = lots_state.get(key) or {}, everywhere.get(key)
@@ -92,7 +100,11 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
         return check(lot, stats), None
 
     def get_detail(lot):
-        return projapan.enrich(lot) if lot.get("site") == "projapan" else site.lot(lot["id"])
+        if lot.get("site") == "projapan":
+            return projapan.enrich(lot)
+        if ma_error:  # its lot pages are down too: only what the listing had
+            return lot.get("detail") or {}
+        return site.lot(lot["id"])
 
     now = time.time()
     details = {}  # lot pages already fetched in this pass, reused for the web page
@@ -227,7 +239,8 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
             store.record_lot(lot_row(lot), int(now), first_seen=first_seen)
     for lot in stats.sold + stats.unsold:
         store.record_lot(lot_row(lot), int(now), first_seen=first_seen)
-    store.forget_unlisted(int(now))
+    if not ma_error:  # with motoauction down its lots were not seen, not delisted
+        store.forget_unlisted(int(now))
     state["lots_seeded"] = True
     for key, entry in lots_state.items():  # entries from before this version lack a title and a bike
         if key in everywhere:
@@ -285,6 +298,29 @@ def maybe_send_digest(store, tg, for_sale):
         lines += soon
     tg.send("\n".join(lines))
     state["digest_day"], state["digest_at"] = today, int(time.time())
+
+
+def note_motoauction(state, tg, err):
+    """motoauction down while projapan works: say so once it lasts, and once it is back."""
+    if err is None:
+        if state.get("ma_alerted"):
+            send_quietly(tg, "✅ motoauction снова отвечает.")
+        state["ma_down_since"], state["ma_alerted"] = None, False
+        return
+    now = int(time.time())
+    state["ma_down_since"] = state.get("ma_down_since") or now
+    down_min = (now - state["ma_down_since"]) // 60
+    if not state.get("ma_alerted") and down_min >= CFG["alert_after_min"]:
+        send_quietly(tg, f"⚠️ motoauction не отвечает уже {down_min} мин — ищу только на projapan.\n"
+                         f"<code>{html.escape(repr(err))[:200]}</code>")
+        state["ma_alerted"] = True
+
+
+def send_quietly(tg, text):
+    try:
+        tg.send(text)
+    except (RuntimeError, OSError) as e:
+        log("could not send:", e)
 
 
 def auctions_soon(state):

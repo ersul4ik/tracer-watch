@@ -75,7 +75,8 @@ CREATE INDEX IF NOT EXISTS notes_bike ON notes (bike);
 # Fields of a state["lots"][key] entry and the sent columns they map to
 ENTRY_COLUMNS = {"at": "sent_at", "msg": "msg_id", "date_ts": "date_ts", "same": "same_key", "frame": "frame",
                  "bike": "bike", "relist_of": "relist_of", "unsold": "unsold_bid", "title": "title", "url": "url"}
-KV_KEYS = ("tg_offset", "last_scan", "digest_day", "digest_at", "fail_since", "alerted", "lots_seeded")
+KV_KEYS = ("tg_offset", "last_scan", "digest_day", "digest_at", "fail_since", "alerted", "lots_seeded",
+           "ma_down_since", "ma_alerted")
 LOT_COLUMNS = ("site", "bike", "frame", "same_key", "model", "year", "rank", "mileage", "start", "final",
                "availability", "auction", "auction_date", "lot_no", "url", "photo", "estimate")
 
@@ -199,6 +200,16 @@ class Store:
         """Lots on sale not seen in this pass dropped out of the listings: their status is unknown now."""
         with self.conn:
             self.conn.execute("UPDATE lots SET availability = NULL WHERE availability = 0 AND last_seen < ?", (now,))
+
+    def archive_rows(self):
+        """Past motoauction auctions kept from earlier passes, shaped like the site's archive rows."""
+        rows = self.conn.execute("SELECT * FROM lots WHERE site = 'motoauction' AND availability IN (1, 2)"
+                                 " AND final IS NOT NULL AND auction_date IS NOT NULL")
+        return [{"id": int(r["key"]) if r["key"].isdigit() else r["key"], "brand": "Yamaha", "model": r["model"],
+                 "year": r["year"], "rank": r["rank"], "mileage": r["mileage"], "price": r["final"],
+                 "availability": r["availability"], "auction_date": r["auction_date"], "auction": r["auction"],
+                 "frame": r["frame"], "bid": r["lot_no"], "url": r["url"], "pathImg": r["photo"], "AveragePrice": 0}
+                for r in rows]
 
     def count_lots(self):
         return self.conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]

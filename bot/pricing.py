@@ -31,16 +31,28 @@ class Stats:
     of 838k. The archive loads lazily, only once there is something to estimate.
     """
 
-    def __init__(self, site, groups):
-        self.site, self.groups, self.sold, self.unsold = site, groups, None, None
+    def __init__(self, site, groups, store=None):
+        self.site, self.groups, self.store, self.sold, self.unsold = site, groups, store, None, None
+
+    def _fetch(self):
+        """The archive from motoauction; when the site is down, the copy kept in our own database."""
+        if self.groups:
+            try:
+                rows = {}
+                for g in self.groups:
+                    for lot in self.site.lots(CFG["brand"], g, statistics=True):
+                        lot["url"] = f"{SITE}/{lot['id']}"
+                        rows[lot["id"]] = lot
+                return rows
+            except (OSError, ValueError) as e:
+                if not self.store:
+                    raise
+                log("archive from the database, motoauction did not answer:", repr(e))
+        return {l["id"]: l for l in self.store.archive_rows()} if self.store else {}
 
     def _load(self):
         cutoff = datetime.now(CFG["tz"]).date() - timedelta(days=365)
-        rows = {}
-        for g in self.groups:
-            for lot in self.site.lots(CFG["brand"], g, statistics=True):
-                lot["url"] = f"{SITE}/{lot['id']}"
-                rows[lot["id"]] = lot
+        rows = self._fetch()
         self.sold, self.unsold = [], []
         for lot in rows.values():
             day = auction_day(lot)

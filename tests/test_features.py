@@ -51,6 +51,43 @@ class RelistOfAnyUnsold(unittest.TestCase):
         self.assertEqual(tg.sent, [])
 
 
+class MotoauctionDown(unittest.TestCase):
+    class DownSite:
+        def model_groups(self, brand):
+            raise OSError("Temporary failure in name resolution")
+
+        def lots(self, *a, **k):
+            raise OSError("down")
+
+        def lot(self, *a):
+            raise OSError("down")
+
+    def test_pass_goes_on_with_projapan_and_the_stored_archive(self):
+        from tests.fakes import pj_lot
+        store, tg = Store(), FakeTelegram()
+        # an earlier pass stored the archive
+        use_projapan()
+        run_once(FakeSite(current=[], sold=archive(price=CFG["limit"])), tg, store)
+        self.assertEqual(len(store.archive_rows()), 6)
+        ma = lot(1, price=CFG["limit"] - 100_000)
+        use_projapan({"pj:5": pj_lot(5, ma, price=CFG["limit"] - 100_000)})
+        summary = run_once(self.DownSite(), tg, store)
+        self.assertEqual(len(tg.sent), 1)
+        self.assertIn("projapan", tg.sent[0]["text"])
+        self.assertIn("Обычно уходят", tg.sent[0]["text"])  # estimate from the stored archive
+        self.assertEqual(summary["for_sale"], 1)
+        self.assertTrue(store.state["ma_down_since"])
+
+    def test_both_down_fails_the_pass(self):
+        class DownProJapan:
+            def lots(self):
+                raise OSError("down too")
+        from bot import scan
+        scan.ProJapan = DownProJapan
+        with self.assertRaises(OSError):
+            run_once(self.DownSite(), FakeTelegram(), Store())
+
+
 class Reminders(unittest.TestCase):
     def test_lists_sent_lots_with_auctions_today_and_tomorrow(self):
         state = {"lots": {
