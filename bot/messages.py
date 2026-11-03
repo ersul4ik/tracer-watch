@@ -21,15 +21,32 @@ def report_lines(detail):
 
 # Notes that make a lot worth a careful look: noises, leaks, "needs replacing".
 # "Сильно" (heavy) is serious only when it is not about scratches
-SERIOUS_RE = re.compile(r"требует(ся)? замен|под замену|failure|неисправ|не работ|шум|течь|утечк|трещин|тресн|отказ"
-                        r"|^(?!.*царапин).*сильно", re.I)
+SERIOUS_RE = re.compile(r"(требует(ся)?|необходим\w*|нужн\w*) замен|под замену|failure|неисправ|не работ|шум"
+                        r"|течь|утечк|подт[её]к|трещин|тресн|сальник.*поврежд|отказ|^(?!.*царапин).*сильно", re.I)
 # ...unless the inspector marked it as slight: "Утечка масла, Незначительно" is not a repair
 MINOR_RE = re.compile(r"незначительн|маленьк|малый|малая|слабый|small", re.I)
 
 
 def is_serious(note):
-    """A note line is serious when one of its parts (split by ";") is, and that part is not marked slight."""
-    return any(SERIOUS_RE.search(part) and not MINOR_RE.search(part) for part in re.split(r"[;\n]", note))
+    """A note line is serious when one of its parts is, and that part is not marked slight.
+
+    Parts are split by ";" and ",": projapan packs several findings into one comma-separated line
+    ("Break незначительная ржавчина, Тормозной диск износ требует замены"). A bare qualifier part
+    ("Незначительно") belongs to the finding before it. Within a part, a qualifier counts for a
+    finding only right before it or after it: "незначительная ржавчина Подтек масла" is still a leak.
+    """
+    parts = []
+    for part in re.split(r"[;,\n]", note):
+        if parts and MINOR_RE.search(part) and len(part.split()) <= 2:
+            parts[-1] += part
+        else:
+            parts.append(part)
+
+    def slight(part, m):
+        before = part[:m.start()].split()[-1:]
+        return MINOR_RE.search(" ".join(before + [part[m.start():]]))
+
+    return any(not slight(part, m) for part in parts for m in SERIOUS_RE.finditer(part))
 
 
 def inspection_lines(detail):

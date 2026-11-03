@@ -30,6 +30,15 @@ class Serious(unittest.TestCase):
         self.assertTrue(is_serious("• Сальник вилки треснувший"))
         self.assertTrue(is_serious("• Задняя часть: Утечка масла, Незначительно; Требуется замена тормозного диска."))
 
+    def test_finding_shares_a_line_with_a_slight_one(self):
+        # projapan's comma-separated lines from BDS lot 2637 (06.11.2026)
+        self.assertTrue(is_serious("• Задний тормоз: Break незначительная ржавчина, Тормозной диск износ требует замены"))
+        self.assertTrue(is_serious("• Задний амортизатор: Амортизатор незначительная ржавчина Подтек масла слабо"))
+        self.assertTrue(is_serious("• Вилка: Сальник повреждено"))
+        self.assertTrue(is_serious("• Fog-lamp необходима замена"))
+        self.assertFalse(is_serious("• Подножка мотоцикла незначительная ржавчина Treatment слабо"))
+        self.assertFalse(is_serious("• Глушитель царапины слабо неоригинальная деталь, Крышка царапины"))
+
 
 class RelistOfAnyUnsold(unittest.TestCase):
     def test_bike_unsold_above_the_limit_comes_back_cheaper(self):
