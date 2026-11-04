@@ -35,7 +35,7 @@ class ProJapanStart(unittest.TestCase):
     def test_placeholder_start_means_unknown(self):
         pj = ProJapan()
         raw = {"id": 1, "auction_date": "2026-11-06 00:00:00", "parser_type": 2, "auction_status": 0, "sold_status": 0}
-        for placeholder in (88_888_000, 99_990_000):
+        for placeholder in (88_888_000, 99_990_000, 9_999_000):
             self.assertEqual(pj._lot({**raw, "price_start": placeholder})["price"], 0)
         self.assertEqual(pj._lot({**raw, "price_start": 600_000})["price"], 600_000)
 

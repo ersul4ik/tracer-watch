@@ -19,8 +19,9 @@ class ProJapan:
     BASE = "https://projapan.ru"
     AUCTIONS = {1: "BDS", 2: "JBA", 3: "ARAI", 4: "AUCNET"}
     STATUS = {(0, 0): FOR_SALE, (1, 1): SOLD, (1, 0): NOT_SOLD}
-    # Placeholders for "no start price yet": 99,990,000, JBA's 88,888,000. No motorcycle here costs ¥10M.
-    NO_PRICE_FROM = 10_000_000
+    # Placeholders for "no start price yet": 99,990,000, JBA's 88,888,000, AUCNET's 9,999,000.
+    # No Tracer starts anywhere near ¥5M.
+    NO_PRICE_FROM = 5_000_000
 
     def _get(self, params, method="get-list"):
         url = f"{self.BASE}/api/lot/{method}?" + urllib.parse.urlencode(params)
