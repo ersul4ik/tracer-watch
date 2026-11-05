@@ -6,7 +6,7 @@ from datetime import datetime
 
 from .config import CFG, FOR_SALE, NOT_SOLD, SOLD, fmt_jpy, log
 from .export import board_archive, board_history, board_lot, board_unsold, lot_row
-from .messages import (grade_message, lot_message, lot_title, relist_intro, result_message,
+from .messages import (grade_message, lot_message, lot_title, relist_intro, reserve_message, result_message,
                        unsold_intro)
 from .pricing import (Stats, auction_day, basic_reason, bike_id, check, days_to_auction, frame_key,
                       limit_for, same_lot_key, unsold_bid)
@@ -136,6 +136,7 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
                            "same": same_lot_key(lot), "bike": bike_id(lot), "title": lot_title(lot), "url": lot["url"]}
         if lot.get("site") == "projapan":
             lots_state[key]["frame"] = detail.get("frame_number")  # the outcome is looked up by frame later
+            lots_state[key]["reserve"] = detail.get("reserve_jpy") or None  # the message already shows it
         if relist:
             lots_state[key]["relist_of"] = str(prev["id"])
         log(f"sent lot {key}" + (f", relist of {prev['id']}" if relist else ""))
@@ -154,7 +155,26 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
         tg.send(grade_message(lot, detail, stats), reply_to=entry.get("msg"))
         settle_copies(key, "graded")
         entry["graded"] = True
+        entry["reserve"] = detail.get("reserve_jpy") or entry.get("reserve")  # the follow-up shows it
         log(f"grade follow-up sent for lot {key}")
+
+    # JBA shows the seller's reserve a day or so before the auction, and the seller may change it:
+    # reply as soon as it is out, and again on every change. The lot page is reused by the web page below
+    for key, entry in lots_state.items():
+        lot = everywhere.get(key)
+        if (entry.get("done") or not lot or lot.get("site") != "projapan" or lot.get("auction") != "JBA"
+                or lot.get("availability") != FOR_SALE):
+            continue
+        try:
+            detail = details[key] = details.get(key) or get_detail(lot)
+        except (OSError, ValueError) as e:
+            log(f"lot {key}: {e!r}")
+            continue
+        reserve = detail.get("reserve_jpy")
+        if reserve and reserve != entry.get("reserve"):
+            tg.send(reserve_message(lot, detail, entry.get("reserve")), reply_to=entry.get("msg"))
+            entry["reserve"] = reserve
+            log(f"reserve {reserve} sent for lot {key}")
 
     # auction outcomes for lots already sent
     for key, entry in lots_state.items():

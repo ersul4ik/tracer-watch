@@ -60,6 +60,46 @@ class RelistOfAnyUnsold(unittest.TestCase):
         self.assertEqual(tg.sent, [])
 
 
+class SellerReserve(unittest.TestCase):
+    def test_reserve_is_reported_once_it_shows_up_and_on_every_change(self):
+        from tests.fakes import pj_lot
+        store, tg = Store(), FakeTelegram()
+        site = FakeSite(current=[], sold=archive(price=CFG["limit"]))
+        pj = pj_lot(5, lot(1, auction="JBA"), price=CFG["limit"] - 100_000)
+        use_projapan({"pj:5": pj})
+        run_once(site, tg, store)
+        self.assertEqual(len(tg.sent), 1)
+        self.assertNotIn("Резерв", tg.sent[0]["text"])
+        run_once(site, tg, store)
+        self.assertEqual(len(tg.sent), 1)  # still no reserve: nothing to say
+
+        pj["detail"]["reserve_jpy"] = 700_000
+        run_once(site, tg, store)
+        run_once(site, tg, store)
+        self.assertEqual(len(tg.sent), 2)
+        self.assertIn("Продавец показал резерв", tg.sent[1]["text"])
+        self.assertIn("700 000", tg.sent[1]["text"])
+        self.assertEqual(tg.sent[1]["reply_to"], 1001)
+
+        pj["detail"]["reserve_jpy"] = CFG["limit"] + 10_000
+        run_once(site, tg, store)
+        self.assertEqual(len(tg.sent), 3)
+        self.assertIn("изменил резерв: было 700 000", tg.sent[2]["text"])
+        self.assertIn("выше нашего лимита", tg.sent[2]["text"])
+
+    def test_reserve_known_when_sent_is_not_repeated(self):
+        from tests.fakes import pj_lot
+        store, tg = Store(), FakeTelegram()
+        site = FakeSite(current=[], sold=archive(price=CFG["limit"]))
+        pj = pj_lot(5, lot(1, auction="JBA"), price=CFG["limit"] - 100_000)
+        pj["detail"]["reserve_jpy"] = 700_000
+        use_projapan({"pj:5": pj})
+        run_once(site, tg, store)
+        run_once(site, tg, store)
+        self.assertEqual(len(tg.sent), 1)
+        self.assertIn("Резерв продавца: <b>700 000", tg.sent[0]["text"])
+
+
 class MotoauctionDown(unittest.TestCase):
     class DownSite:
         def model_groups(self, brand):

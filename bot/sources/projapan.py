@@ -126,7 +126,21 @@ class ProJapan:
             detail["prev_meter"] = f"{fmt_num(int(prev))} км"
         detail["ratings_line"] = self._ratings_line(x) or detail.get("ratings_line")
         lot["rank"] = x.get("rank") or lot["rank"]
+        # JBA only: the seller's reserve, start and scheduled time (JST); prices in thousands of yen
+        detail["reserve_jpy"] = self._thousands(meta.get("売切価格"))
+        start = self._thousands(meta.get("スタート価格"))
+        if start and not detail.get("price_start_jpy"):
+            detail["price_start_jpy"] = lot["price"] = start
+        when = str(meta.get("セリ予定時刻") or "")
+        if re.match(r"\d{4}-\d\d-\d\d \d\d:\d\d", when):
+            detail["auction_time_jst"] = when[11:16]
         return detail
+
+    def _thousands(self, v):
+        """"700" (thousands of yen) -> 700000; placeholders like 99990 mean not set yet -> 0."""
+        digits = re.sub(r"\D", "", str(v or ""))
+        jpy = int(digits) * 1000 if digits else 0
+        return 0 if jpy >= self.NO_PRICE_FROM else jpy
 
     def result(self, key, frame):
         """The lot's auction outcome: sold lots are in the archive (type=sold), searched by frame."""

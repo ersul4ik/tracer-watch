@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS sent (
     title        TEXT,
     url          TEXT,
     result_sold  INTEGER,
-    result_price INTEGER
+    result_price INTEGER,
+    reserve      INTEGER               -- seller's reserve already reported (JBA)
 );
 -- Every Tracer lot the bot has seen: our own archive, deeper than the site's one year
 CREATE TABLE IF NOT EXISTS lots (
@@ -74,7 +75,10 @@ CREATE INDEX IF NOT EXISTS notes_bike ON notes (bike);
 
 # Fields of a state["lots"][key] entry and the sent columns they map to
 ENTRY_COLUMNS = {"at": "sent_at", "msg": "msg_id", "date_ts": "date_ts", "same": "same_key", "frame": "frame",
-                 "bike": "bike", "relist_of": "relist_of", "unsold": "unsold_bid", "title": "title", "url": "url"}
+                 "bike": "bike", "relist_of": "relist_of", "unsold": "unsold_bid", "title": "title", "url": "url",
+                 "reserve": "reserve"}
+# Columns added after the first release: (table, column, type)
+MIGRATIONS = (("sent", "reserve", "INTEGER"),)
 KV_KEYS = ("tg_offset", "last_scan", "digest_day", "digest_at", "fail_since", "alerted", "lots_seeded",
            "ma_down_since", "ma_alerted")
 LOT_COLUMNS = ("site", "bike", "frame", "same_key", "model", "year", "rank", "mileage", "start", "final",
@@ -88,6 +92,9 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         # a no-op on an existing database: the file changes only when data does
         self.conn.executescript(SCHEMA)
+        for table, column, kind in MIGRATIONS:
+            if column not in {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
         self.state = self._load_state()
         self._saved = self._snapshot()
 

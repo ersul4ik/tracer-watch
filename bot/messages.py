@@ -2,7 +2,7 @@
 import html
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from .config import CFG, SOLD, fmt_jpy, fmt_num
 from .pricing import check, expected_price, landed_usd, limit_for, suggested_bid
@@ -64,6 +64,40 @@ def inspection_lines(detail):
     return [html.escape(x) for x in lines]
 
 
+JST = timezone(timedelta(hours=9))
+
+
+def auction_time(detail):
+    """" в 11:50 по Японии (08:50 у нас)" when the scheduled time is known (JBA), else ""."""
+    jst = detail.get("auction_time_jst")
+    if not jst:
+        return ""
+    local = datetime.strptime(jst, "%H:%M").replace(year=2000, tzinfo=JST).astimezone(CFG["tz"])
+    return f" в {jst} по Японии ({local:%H:%M} у нас)"
+
+
+def reserve_line(detail, limit):
+    """The seller's reserve (JBA) against our limit: the lot sells only once bidding reaches it."""
+    reserve = detail.get("reserve_jpy")
+    if not reserve:
+        return None
+    if reserve > limit:
+        return (f"🔐 Резерв продавца: <b>{fmt_jpy(reserve)}</b> — выше нашего лимита на {fmt_jpy(reserve - limit)}:"
+                " на торгах не взять, только торговаться, если не продадут")
+    return f"🔐 Резерв продавца: <b>{fmt_jpy(reserve)}</b> — в нашем лимите: дойдут ставки до него — продадут"
+
+
+def reserve_message(lot, detail, before=None):
+    """Follow-up once JBA shows the seller's reserve, or when the seller changes it."""
+    head = ([f"🔁 Продавец изменил резерв: было {fmt_jpy(before)}"] if before else
+            ["🔐 <b>Продавец показал резерв</b>"])
+    head.append(reserve_line(detail, limit_for(lot.get("rank"))))
+    start = detail.get("price_start_jpy") or lot.get("price") or 0
+    head.append(f"Старт: {fmt_jpy(start) if start else 'пока неизвестен'}"
+                f" · торги {html.escape(lot.get('auction_date') or '?')}{auction_time(detail)}")
+    return "\n".join(head)
+
+
 def fit(head, tail, max_len):
     text = "\n".join(head)
     for line in tail:
@@ -105,7 +139,8 @@ def lot_message(lot, detail, max_len, stats=None, intro=(), notes=()):
         f"🏍 <b>{e(lot.get('brand') or '')} {e(lot.get('model') or '')}</b> · {lot.get('year') or 'год ?'}",
         f"Оценка <b>{rank or '?'}</b> · {fmt_num(lot.get('mileage') or 0)} км"
         f" · {lot.get('volume') or '?'} cc · {e(detail.get('color') or '')}",
-        f"Торги <b>{e(lot.get('auction_date') or '?')}</b> · {e(detail.get('auction_line') or lot.get('auction') or '')}"
+        f"Торги <b>{e(lot.get('auction_date') or '?')}</b>{auction_time(detail)}"
+        f" · {e(detail.get('auction_line') or lot.get('auction') or '')}"
         f" · лот {e(str(detail.get('lot_number') or lot.get('bid') or ''))}",
         f"Старт: {fmt_jpy(start) if start else 'пока неизвестен'}",
         expect_line,
@@ -113,6 +148,8 @@ def lot_message(lot, detail, max_len, stats=None, intro=(), notes=()):
         (f"💵 Ставь максимум <b>{fmt_jpy(bid)}</b>: выйдет ~{fmt_num(landed_usd(bid))} $ со всеми расходами"
          + (f" (при лимите ~{fmt_num(landed_usd(limit))} $)" if bid < limit else "")),
     ]
+    if reserve_line(detail, limit):
+        head.append(reserve_line(detail, limit))
     if sheet:
         head.append(f"🔧 В листе осмотра серьёзных замечаний: {serious} — они ниже с ❗" if serious
                     else "✅ Без серьёзных замечаний в листе осмотра")
@@ -132,6 +169,8 @@ def grade_message(lot, detail, stats):
     _, est = expected_price(lot, stats)
     if est:
         head.append(f"Обычно уходят за: ~{fmt_jpy(est['median'])} (медиана {est['n']} продаж, {est['scope']})")
+    if reserve_line(detail, limit_for(lot.get("rank"))):
+        head.append(reserve_line(detail, limit_for(lot.get("rank"))))
     tail = inspection_lines(detail)
     if reason:
         head.append(f"❌ Теперь не подходит: {html.escape(reason)}")
