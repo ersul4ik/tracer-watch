@@ -59,6 +59,15 @@ class RelistOfAnyUnsold(unittest.TestCase):
         run_once(FakeSite(current=[again], sold=archive() + [unsold]), tg, store)
         self.assertEqual(tg.sent, [])
 
+    def test_relist_refused_far_above_the_limit_is_skipped(self):
+        # 7600 on 13.11.2026: unsold at 1.5M, relisted with no start yet, against an 880k limit
+        use_projapan()
+        store, tg = Store(), FakeTelegram()
+        unsold = lot(600, price=int(CFG["limit"] * CFG["expect_ratio"]) + 10_000, availability=NOT_SOLD, date=-7)
+        again = lot(601, price=0, frame=unsold["frame"], date=3)
+        run_once(FakeSite(current=[again], sold=archive() + [unsold]), tg, store)
+        self.assertEqual(tg.sent, [])
+
 
 class SellerReserve(unittest.TestCase):
     def test_reserve_is_reported_once_it_shows_up_and_on_every_change(self):

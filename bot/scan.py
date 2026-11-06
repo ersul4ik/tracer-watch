@@ -93,9 +93,13 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
         """The reason to skip (None if it qualifies) and the earlier unsold lot if this is a relist."""
         prev = relist_watch.get(frame_key(lot))
         if prev and lot.get("availability") == FOR_SALE and (auction_day(lot) or auction_day(prev)) > auction_day(prev):
-            start = lot.get("price") or 0
-            if start > limit_for(lot.get("rank")) * CFG["near_ratio"]:
+            start, limit = lot.get("price") or 0, limit_for(lot.get("rank"))
+            if start > limit * CFG["near_ratio"]:
                 return f"старт {fmt_jpy(start)} выше лимита (перевыставлен)", prev
+            # a seller who refused far more than we would pay will not come down to our price
+            bid = prev.get("price") or 0
+            if CFG["expect_ratio"] and bid > limit * CFG["expect_ratio"]:
+                return f"перевыставлен, но ставка уже доходила до {fmt_jpy(bid)}", prev
             return basic_reason(lot), prev
         return check(lot, stats), None
 
