@@ -47,20 +47,30 @@ class Stats:
         self.site, self.groups, self.store, self.sold, self.unsold = site, groups, store, None, None
 
     def _fetch(self):
-        """The archive from motoauction; when the site is down, the copy kept in our own database."""
-        if self.groups:
-            try:
-                rows = {}
-                for g in self.groups:
-                    for lot in self.site.lots(CFG["brand"], g, statistics=True):
-                        lot["url"] = f"{SITE}/{lot['id']}"
-                        rows[lot["id"]] = lot
-                return rows
-            except (OSError, ValueError) as e:
-                if not self.store:
-                    raise
-                log("archive from the database, motoauction did not answer:", repr(e))
-        return {l["id"]: l for l in self.store.archive_rows()} if self.store else {}
+        """motoauction's archive on top of the copy kept in our own database.
+
+        Since November 2026 the site serves only the last month of it and lists only the models
+        with lots on sale, so the year of sales comes from earlier passes; the model names stored
+        in the past month are asked for too, or a sale in a group with nothing left on sale is missed.
+        """
+        stored = {l["id"]: l for l in self.store.archive_rows()} if self.store else {}
+        if not self.groups:
+            return stored
+        month_ago = datetime.now(CFG["tz"]).date() - timedelta(days=31)
+        names = list(dict.fromkeys(self.groups + sorted(
+            {l["model"] for l in stored.values() if l["model"] and (auction_day(l) or month_ago) > month_ago})))
+        try:
+            rows = {}
+            for g in names:
+                for lot in self.site.lots(CFG["brand"], g, statistics=True):
+                    lot["url"] = f"{SITE}/{lot['id']}"
+                    rows[lot["id"]] = lot
+        except (OSError, ValueError) as e:
+            if not self.store:
+                raise
+            log("archive from the database, motoauction did not answer:", repr(e))
+            return stored
+        return {**stored, **rows}
 
     def _load(self):
         cutoff = datetime.now(CFG["tz"]).date() - timedelta(days=365)

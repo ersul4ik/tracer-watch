@@ -3,12 +3,12 @@ import time
 import unittest.mock
 import unittest
 
-from bot.config import CFG, NOT_SOLD
+from bot.config import CFG, NOT_SOLD, SOLD
 from bot.db import Store
 from bot.messages import is_serious
-from bot.pricing import landed_usd, suggested_bid
+from bot.pricing import Stats, landed_usd, suggested_bid
 from bot.scan import auctions_soon, note_site_down, run_once
-from tests.fakes import FakeSite, FakeTelegram, archive, lot, ts, use_projapan
+from tests.fakes import FakeSite, FakeTelegram, archive, day, lot, ts, use_projapan
 
 
 class Budget(unittest.TestCase):
@@ -98,6 +98,31 @@ class SellerReserve(unittest.TestCase):
         run_once(site, tg, store)
         self.assertEqual(len(tg.sent), 1)
         self.assertIn("Резерв продавца: <b>700 000", tg.sent[0]["text"])
+
+
+class ShortArchive(unittest.TestCase):
+    def test_stored_year_of_sales_stays_when_the_site_serves_only_a_month(self):
+        store, tg = Store(), FakeTelegram()
+        use_projapan()
+        old = archive(price=800_000)  # sold 10-15 days ago, stored by this pass
+        run_once(FakeSite(current=[], sold=old), tg, store)
+        # Now the site serves one new sale, under a renamed group that has nothing on sale
+        new = lot(950000, model="TRACER 900 GT", price=900_000, availability=SOLD, date=-1)
+        site = FakeSite(current=[], sold=[new], groups=["TRACER 9 GT"])
+        store.record_lot({"key": "950001", "site": "motoauction", "model": "TRACER 900 GT", "availability": SOLD,
+                          "final": 850_000, "auction_date": day(-2)}, 1)
+        stats = Stats(site, ["TRACER 9 GT"], store)
+        stats._load()
+        self.assertEqual(len(stats.sold), 8)
+        self.assertIn(950000, {l["id"] for l in stats.sold})  # asked for by the stored model name
+
+    def test_site_down_uses_the_stored_archive(self):
+        store = Store()
+        use_projapan()
+        run_once(FakeSite(current=[], sold=archive()), FakeTelegram(), store)
+        stats = Stats(MotoauctionDown.DownSite(), ["MT-09 TRACER GT"], store)
+        stats._load()
+        self.assertEqual(len(stats.sold), 6)
 
 
 class MotoauctionDown(unittest.TestCase):
