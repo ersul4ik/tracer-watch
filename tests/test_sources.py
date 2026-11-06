@@ -2,7 +2,8 @@ import unittest
 import unittest.mock
 from datetime import timedelta, timezone
 
-from bot.config import CFG
+from bot.config import CFG, FOR_SALE, SOLD
+from bot.export import lot_row
 from bot.messages import auction_time
 from bot.sources.motoauction import Site
 from bot.sources.projapan import ProJapan
@@ -59,6 +60,16 @@ class ProJapanStart(unittest.TestCase):
         meta.update({"売切価格": "99990", "スタート価格": "99990"})
         detail = pj.enrich(pj._lot(raw))
         self.assertEqual((detail["reserve_jpy"], detail["price_start_jpy"]), (0, 0))
+
+    def test_sold_lot_is_stored_with_the_hammer_price_not_the_start(self):
+        # JBA lot 7149 on 06.11.2026: start 730k, sold for 812k
+        raw = {"id": 2290763, "auction_date": "2026-11-06 00:00:00", "parser_type": 2, "auction_status": 1,
+               "sold_status": 1, "price_start": 730_000, "price_end": 812_000}
+        row = lot_row(ProJapan()._lot(raw))
+        self.assertEqual((row["availability"], row["start"], row["final"]), (SOLD, 730_000, 812_000))
+        # motoauction's archive rows carry the sale price in price alone
+        self.assertEqual(lot_row({"id": 1, "price": 812_000, "availability": SOLD})["final"], 812_000)
+        self.assertIsNone(lot_row({"id": 2, "price": 730_000, "availability": FOR_SALE})["final"])
 
 
 if __name__ == "__main__":

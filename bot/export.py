@@ -33,7 +33,9 @@ def lot_row(lot, detail=None, estimate=None):
             "frame": lot.get("frame") or detail.get("frame_number"), "same_key": same_lot_key(lot),
             "model": lot.get("model"), "year": lot.get("year"), "rank": lot.get("rank"),
             "mileage": lot.get("mileage"), "start": detail.get("price_start_jpy") or lot.get("price") or None,
-            "final": (lot.get("price") if lot.get("availability") in (SOLD, NOT_SOLD) else lot.get("final")) or None,
+            # projapan keeps the start in price and the hammer price in final; motoauction's archive has only price
+            "final": (lot.get("final") or (lot.get("price") if lot.get("availability") in (SOLD, NOT_SOLD) else 0))
+                     or None,
             "availability": lot.get("availability"), "auction": detail.get("auction_line") or lot.get("auction"),
             "auction_date": lot.get("auction_date"), "lot_no": str(lot.get("bid") or "") or None,
             "url": lot.get("url"), "photo": lot.get("pathImg"), "estimate": estimate}
