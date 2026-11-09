@@ -134,6 +134,28 @@ class ShortArchive(unittest.TestCase):
         self.assertEqual(len(stats.sold), 6)
 
 
+class VagueModelName(unittest.TestCase):
+    def test_gt_listed_as_tracer_mt09_is_priced_as_a_gt(self):
+        # BDS lot 263 on 11.11.2026: "TRACER MT-09" on motoauction, "Tracer 900 GT" on projapan
+        from tests.fakes import pj_lot
+        store, tg = Store(), FakeTelegram()
+        gts = archive(price=CFG["limit"])
+        plain = [lot(910000 + i, model="TRACER MT-09", price=CFG["limit"] - 300_000, availability=SOLD, date=-5 - i)
+                 for i in range(3)]
+        ma = lot(1, model="TRACER MT-09", price=CFG["limit"] - 200_000)
+        use_projapan({"pj:5": pj_lot(5, ma, model="Tracer 900 GT", price=CFG["limit"] - 200_000)})
+        site = FakeSite(current=[ma], sold=gts + plain, groups=["MT-09 TRACER GT", "TRACER MT-09"])
+        summary = run_once(site, tg, store)
+        self.assertEqual(len(tg.sent), 1)
+        estimate = summary["board"]["lots"][0]["estimate"]
+        self.assertEqual((estimate["median"], estimate["n"]), (CFG["limit"], 6))  # the GT sales, not the plain ones
+        self.assertEqual(summary["board"]["lots"][0]["model"], "Tracer 900 GT")
+
+    def test_without_a_projapan_copy_it_stays_the_plain_tracer(self):
+        from bot.pricing import model_key, resolve_model
+        self.assertEqual(model_key(resolve_model(lot(1, model="TRACER MT-09"), {})), "MT-09TRACER")
+
+
 class MotoauctionDown(unittest.TestCase):
     class DownSite:
         def model_groups(self, brand):

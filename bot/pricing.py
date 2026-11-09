@@ -36,6 +36,16 @@ def model_key(lot):
     return name
 
 
+def resolve_model(lot, models):
+    """Since November 2026 motoauction lists 900 GTs and plain 900s alike as "TRACER MT-09": priced
+    as a model of its own, lot 263 (a 2019 GT, 6,815 km) got 760k from three sales instead of ~940k.
+    models maps a same-lot key to the model projapan gives that lot; without a copy there the name
+    keeps the meaning it had before, the plain Tracer."""
+    if stats_model(lot.get("model")) == "TRACERMT-09":
+        lot["model"] = models.get(same_lot_key(lot)) or "MT-09 TRACER"
+    return lot
+
+
 class Stats:
     """What similar lots actually sold for, from the same site's sales archive for the past year.
 
@@ -75,8 +85,10 @@ class Stats:
     def _load(self):
         cutoff = datetime.now(CFG["tz"]).date() - timedelta(days=365)
         rows = self._fetch()
+        models = self.store.models_by_same() if self.store else {}
         self.sold, self.unsold = [], []
         for lot in rows.values():
+            resolve_model(lot, models)
             day = auction_day(lot)
             if not day or day < cutoff or not lot.get("price"):
                 continue

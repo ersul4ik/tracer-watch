@@ -9,7 +9,7 @@ from .export import board_archive, board_history, board_lot, board_unsold, lot_r
 from .messages import (grade_message, lot_message, lot_title, relist_intro, reserve_message, result_message,
                        unsold_intro)
 from .pricing import (Stats, auction_day, basic_reason, bike_id, check, days_to_auction, frame_key,
-                      limit_for, same_lot_key, unsold_bid)
+                      limit_for, resolve_model, same_lot_key, unsold_bid)
 from .sources.motoauction import SITE
 from .sources.projapan import ProJapan
 
@@ -55,6 +55,10 @@ def run_once(site, tg, store, include_finished=False, verbose=False):
         if ma_error:
             raise ma_error  # both down: nothing to look at
     note_motoauction(state, tg, ma_error)
+    models = store.models_by_same()
+    models.update({same_lot_key(l): l["model"] for l in everywhere.values() if l.get("site") == "projapan"})
+    for lot in lots.values():
+        resolve_model(lot, models)
 
     def same_of(key):
         entry, lot = lots_state.get(key) or {}, everywhere.get(key)

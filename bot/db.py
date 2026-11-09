@@ -218,6 +218,11 @@ class Store:
                  "frame": r["frame"], "bid": r["lot_no"], "url": r["url"], "pathImg": r["photo"], "AveragePrice": 0}
                 for r in rows]
 
+    def models_by_same(self):
+        """Same-lot key -> the model projapan gives that lot, for motoauction rows named too vaguely."""
+        return {r[0]: r[1] for r in self.conn.execute(
+            "SELECT same_key, model FROM lots WHERE site = 'projapan' AND same_key IS NOT NULL AND model IS NOT NULL")}
+
     def count_lots(self):
         return self.conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
 
