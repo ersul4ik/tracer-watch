@@ -131,6 +131,16 @@ class Stats:
         factor = math.exp(self.per_km * (sale["mileage"] - km) / 1000)
         return int(round(sale["price"] * min(max(factor, 0.45), 1.6), -3))
 
+    def _year_by_frame(self, lot):
+        """The year of the archive lot with the nearest frame number. projapan often gives no year,
+        and with none no sale matched: a 2025 GT+ (JBA 7237, 1,403 km) went out with no estimate."""
+        frame = frame_key(lot) or ""  # RNA1J000820: the type, then the serial number
+        if not frame[5:].isdigit():
+            return None
+        near = [(abs(int(f[5:]) - int(frame[5:])), s["year"]) for s in self.sold + self.unsold
+                if s.get("year") and (f := frame_key(s) or "")[:5] == frame[:5] and f[5:].isdigit()]
+        return min(near)[1] if near else None
+
     def estimate(self, lot):
         """Median final price of similar lots, or None with fewer than three of them.
 
@@ -139,7 +149,7 @@ class Stats:
         """
         if self.sold is None:
             self._load()
-        model, year, rank = model_key(lot), lot.get("year") or 0, lot.get("rank")
+        model, year, rank = model_key(lot), lot.get("year") or self._year_by_frame(lot) or 0, lot.get("rank")
         km = lot.get("mileage")
         for years, by_rank in ((1, True), (1, False), (2, False)):
             if by_rank and not rank:

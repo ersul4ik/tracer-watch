@@ -6,7 +6,7 @@ import unittest
 from bot.config import CFG, NOT_SOLD, SOLD
 from bot.db import Store
 from bot.messages import is_serious
-from bot.pricing import Stats, landed_usd, suggested_bid
+from bot.pricing import Stats, check, landed_usd, suggested_bid
 from bot.scan import auctions_soon, note_site_down, run_once
 from tests.fakes import FakeSite, FakeTelegram, archive, day, lot, ts, use_projapan
 
@@ -154,6 +154,19 @@ class VagueModelName(unittest.TestCase):
     def test_without_a_projapan_copy_it_stays_the_plain_tracer(self):
         from bot.pricing import model_key, resolve_model
         self.assertEqual(model_key(resolve_model(lot(1, model="TRACER MT-09"), {})), "MT-09TRACER")
+
+
+class NoYear(unittest.TestCase):
+    def test_year_comes_from_the_nearest_frame_in_the_archive(self):
+        # JBA 7237 on 13.11.2026: a 2025 GT+ with no year on projapan went out with no estimate
+        sold = [lot(900000 + i, model="TRACER9 GT+", year=2025, price=1_800_000, availability=SOLD, date=-10 - i,
+                    frame=f"RNA1J-00083{i}") for i in range(3)]
+        sold.append(lot(900010, model="TRACER9 GT+", year=2022, price=1_200_000, availability=SOLD, date=-20,
+                        frame="RNA1J-000100"))
+        stats = Stats(FakeSite(sold=sold, groups=["TRACER9 GT+"]), ["TRACER9 GT+"])
+        new = lot(1, model="Tracer 9 GT+ Y-AMT", year=None, frame="RNA1J-000820")
+        self.assertEqual(stats.estimate(new)["median"], 1_800_000)
+        self.assertIn("обычно уходят", check(new, stats))
 
 
 class MotoauctionDown(unittest.TestCase):
